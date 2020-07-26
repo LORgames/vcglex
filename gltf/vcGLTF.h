@@ -9,6 +9,6 @@ struct vcGLTFScene;
 udResult vcGLTF_LoadPolygonModel(vcGLTFScene **ppScene, const char *pFilename, udWorkerPool *pWorkerPool);
 void vcGLTF_Destroy(vcGLTFScene **ppScene);
 
-udResult vcGLTF_Render(vcGLTFScene *ppScene, udDouble4x4 globalMatrix);
+udResult vcGLTF_Render(vcGLTFScene *ppScene, udDouble3 cameraPosition, udDouble4x4 worldMatrix, udDouble4x4 viewMatrix, udDouble4x4 projectionMatrix);
 
 #endif //vcGLTF_h__

@@ -10,6 +10,18 @@
 #include "udFile.h"
 #include "udStringUtil.h"
 
+enum vcGLTFTypes
+{
+  vcGLTFType_Int8 = 5120,
+  vcGLTFType_UInt8 = 5121,
+  vcGLTFType_Int16 = 5122,
+  vcGLTFType_UInt16 = 5123,
+  vcGLTFType_Int32 = 5124,
+  vcGLTFType_Uint32 = 5125,
+  vcGLTFType_F32 = 5126,
+  vcGLTFType_F64 = 5130
+};
+
 struct vcGLTFNode
 {
   udDouble4x4 matrix;
@@ -42,6 +54,274 @@ struct vcGLTFScene
 };
 
 vcShader* s_pBasicShader = nullptr;
+vcShaderConstantBuffer *s_pBasicShaderVertUniformBuffer = nullptr;
+vcShaderConstantBuffer *s_pBasicShaderFragUniformBuffer = nullptr;
+
+#ifndef LIGHT_COUNT
+# define LIGHT_COUNT 1
+#endif
+
+/*struct udFloat3x3
+{
+  udFloat3 x;
+  udFloat3 y;
+  udFloat3 z;
+};*/
+
+struct vcGLTFVertInputs
+{
+  udFloat4x4 u_ViewProjectionMatrix;
+  udFloat4x4 u_ModelMatrix;
+  udFloat4x4 u_NormalMatrix;
+
+#ifdef USE_MORPHING
+  uniform float u_morphWeights[WEIGHT_COUNT];
+#endif
+
+#ifdef USE_SKINNING
+  float4x4 u_jointMatrix[JOINT_COUNT];
+  float4x4 u_jointNormalMatrix[JOINT_COUNT];
+#endif
+} s_gltfVertInfo = {};
+
+#define HAS_NORMALS
+#define MATERIAL_METALLICROUGHNESS
+#define USE_PUNCTUAL
+
+struct Light
+{
+  udFloat3 direction;
+  float range;
+
+  udFloat3 color;
+  float intensity;
+
+  udFloat3 position;
+  float innerConeCos;
+
+  float outerConeCos;
+  int type;
+
+  udFloat2 padding;
+};
+
+struct vcGLTFVertFragSettings
+{
+  udFloat3 u_Camera;
+  float u_Exposure;
+  udFloat3 u_EmissiveFactor;
+
+  float u_NormalScale; // Only used with HAS_NORMALS but serves as padding otherwise
+
+  // Metallic Roughness
+#ifdef MATERIAL_METALLICROUGHNESS
+  udFloat4 u_BaseColorFactor;
+  float u_MetallicFactor;
+  float u_RoughnessFactor;
+  int u_BaseColorUVSet; // Only needed with HAS_BASE_COLOR_MAP
+  int u_MetallicRoughnessUVSet; // Only needed with HAS_METALLIC_ROUGHNESS_MAP
+
+# ifdef HAS_BASECOLOR_UV_TRANSFORM
+  float3x3 u_BaseColorUVTransform;
+# endif
+
+# ifdef HAS_METALLICROUGHNESS_UV_TRANSFORM
+  float3x3 u_MetallicRoughnessUVTransform;
+# endif
+#endif
+
+  // Specular Glossiness
+#ifdef MATERIAL_SPECULARGLOSSINESS
+  float u_GlossinessFactor;
+  float3 u_SpecularFactor;
+  float4 u_DiffuseFactor;
+
+#ifdef HAS_DIFFUSE_MAP
+  int u_DiffuseUVSet;
+#ifdef HAS_DIFFUSE_UV_TRANSFORM
+  float3x3 u_DiffuseUVTransform;
+#endif
+#endif
+
+#ifdef HAS_SPECULAR_GLOSSINESS_MAP
+  int u_SpecularGlossinessUVSet;
+#ifdef HAS_SPECULARGLOSSINESS_UV_TRANSFORM
+  float3x3 u_SpecularGlossinessUVTransform;
+#endif
+#endif
+#endif
+
+  // Specular / Metalic Override
+#ifdef MATERIAL_METALLICROUGHNESS_SPECULAROVERRIDE
+  float u_MetallicRoughnessSpecularFactor;
+#ifdef HAS_METALLICROUGHNESS_SPECULAROVERRIDE_MAP
+  int u_MetallicRougnessSpecularTextureUVSet;
+#ifdef HAS_METALLICROUGHNESSSPECULAR_UV_TRANSFORM
+  float3x3 u_MetallicRougnessSpecularUVTransform;
+#endif
+#endif
+#endif
+
+  // General Material
+#ifdef HAS_NORMAL_MAP
+  int u_NormalUVSet;
+# ifdef HAS_NORMAL_UV_TRANSFORM
+  float3x3 u_NormalUVTransform;
+# endif
+#endif
+
+#ifdef HAS_EMISSIVE_MAP
+  int u_EmissiveUVSet;
+# ifdef HAS_EMISSIVE_UV_TRANSFORM
+  float3x3 u_EmissiveUVTransform;
+# endif
+#endif
+
+#ifdef HAS_OCCLUSION_MAP
+  int u_OcclusionUVSet;
+  float u_OcclusionStrength;
+# ifdef HAS_OCCLUSION_UV_TRANSFORM
+  float3x3 u_OcclusionUVTransform;
+# endif
+#endif
+
+#ifdef USE_PUNCTUAL
+  Light u_Lights[LIGHT_COUNT];
+#endif
+
+  // Alpha mode
+#ifdef ALPHAMODE_MASK
+  float u_AlphaCutoff;
+#endif
+
+#ifdef USE_UBL
+  // IBL
+  int u_MipCount;
+#endif
+
+  // Sheen
+#ifdef MATERIAL_SHEEN
+  float u_SheenIntensityFactor;
+  float3 u_SheenColorFactor;
+  float u_SheenRoughness;
+
+#ifdef HAS_SHEEN_COLOR_INTENSITY_MAP
+  int u_SheenColorIntensityUVSet;
+#ifdef HAS_SHEENCOLORINTENSITY_UV_TRANSFORM
+  float3x3 u_SheenColorIntensityUVTransform;
+#endif
+#endif
+#endif
+
+  // Clearcoat
+#ifdef MATERIAL_CLEARCOAT
+  float u_ClearcoatFactor;
+  float u_ClearcoatRoughnessFactor;
+
+  int u_ClearcoatUVSet;
+#ifdef HAS_CLEARCOAT_UV_TRANSFORM
+  float3x3 u_ClearcoatUVTransform;
+#endif
+
+  int u_ClearcoatRoughnessUVSet;
+#ifdef HAS_CLEARCOATROUGHNESS_UV_TRANSFORM
+  float3x3 u_ClearcoatRoughnessUVTransform;
+#endif
+
+  int u_ClearcoatNormalUVSet;
+#ifdef HAS_CLEARCOATNORMAL_UV_TRANSFORM
+  float3x3 u_ClearcoatNormalUVTransform;
+#endif
+#endif
+
+  // Anisotropy
+#ifdef MATERIAL_ANISOTROPY
+  float u_Anisotropy;
+  float3 u_AnisotropyDirection;
+
+  int u_AnisotropyUVSet;
+#ifdef HAS_ANISOTROPY_UV_TRANSFORM
+  float3x3 u_AnisotropyUVTransform;
+#endif
+
+  int u_AnisotropyDirectionUVSet;
+#ifdef HAS_ANISOTROPY_DIRECTION_UV_TRANSFORM
+  float3x3 u_AnisotropyDirectionUVTransform;
+#endif
+#endif
+
+  // Subsurface
+#ifdef MATERIAL_SUBSURFACE
+  float u_SubsurfaceScale;
+  float u_SubsurfaceDistortion;
+  float u_SubsurfacePower;
+  float3 u_SubsurfaceColorFactor;
+  float u_SubsurfaceThicknessFactor;
+
+#ifdef HAS_SUBSURFACE_COLOR_MAP
+  int u_SubsurfaceColorUVSet;
+#ifdef HAS_SUBSURFACECOLOR_UV_TRANSFORM
+  float3x3 u_SubsurfaceColorUVTransform;
+#endif
+#endif
+
+#ifdef HAS_SUBSURFACE_THICKNESS_MAP
+  int u_SubsurfaceThicknessUVSet;
+#ifdef HAS_SUBSURFACETHICKNESS_UV_TRANSFORM
+  float3x3 u_SubsurfaceThicknessUVTransform;
+#endif
+#endif
+#endif
+
+  // Thin Film
+#ifdef MATERIAL_THIN_FILM
+  float u_ThinFilmFactor;
+  float u_ThinFilmThicknessMinimum;
+  float u_ThinFilmThicknessMaximum;
+
+#ifdef HAS_THIN_FILM_MAP
+  int u_ThinFilmUVSet;
+#ifdef HAS_THIN_FILM_UV_TRANSFORM
+  float3x3 u_ThinFilmUVTransform;
+#endif
+#endif
+
+#ifdef HAS_THIN_FILM_THICKNESS_MAP
+  int u_ThinFilmThicknessUVSet;
+#ifdef HAS_THIN_FILM_THICKNESS_UV_TRANSFORM
+  float3x3 u_ThinFilmThicknessUVTransform;
+#endif
+#endif
+#endif
+
+#ifdef MATERIAL_IOR
+  // IOR (in .x) and the corresponding f0 (in .y)
+  float2 u_IOR_and_f0;
+#endif
+
+  // Thickness
+#ifdef MATERIAL_THICKNESS
+  float u_Thickness;
+
+  // Thickness:
+#ifdef HAS_THICKNESS_MAP
+  int u_ThicknessUVSet;
+#ifdef HAS_THICKNESS_UV_TRANSFORM
+  float3x3 u_ThicknessUVTransform;
+#endif
+#endif
+#endif
+
+  // Absorption
+#ifdef MATERIAL_ABSORPTION
+  float3 u_AbsorptionColor;
+#endif
+
+  // Transmission
+#ifdef MATERIAL_TRANSMISSION
+  float u_Transmission;
+#endif
+} s_gltfFragInfo = {};
 
 udResult vcGLTF_LoadBuffer(vcGLTFScene *pScene, const udJSON &root, int bufferID)
 {
@@ -80,6 +360,8 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
   {
     const udJSON &primitive = mesh.Get("primitives[%d]", i);
 
+    vcMeshFlags meshFlags = vcMF_None;
+
     int mode = primitive.Get("mode").AsInt(4); // Points, Lines, Triangles
     int material = primitive.Get("material").AsInt(-1);
 
@@ -87,7 +369,7 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
       __debugbreak();
 
     int indexAccessor = primitive.Get("indices").AsInt(-1);
-    vcGLTFBuffer *pIndexBuffer = nullptr;
+    void *pIndexBuffer = nullptr;
     int32_t indexCount = 0;
 
     if (indexAccessor != -1)
@@ -102,11 +384,19 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
         if (bufferID <= -1)
           __debugbreak();
 
+        int indexType = accessor.Get("componentType").AsInt();
+        ptrdiff_t offset = accessor.Get("byteOffset").AsInt64() + root.Get("bufferViews[%d].byteOffset", accessor.Get("bufferView").AsInt(-1)).AsInt();
+
+        if (indexType == vcGLTFType_Int16 || indexType == vcGLTFType_UInt16)
+          meshFlags = meshFlags | vcMF_IndexShort;
+        else if (indexType != vcGLTFType_Int32)
+          __debugbreak();
+
         if (bufferID < pScene->bufferCount && pScene->pBuffers[bufferID].pBytes == nullptr)
           vcGLTF_LoadBuffer(pScene, root, bufferID);
 
         if (pScene->pBuffers[bufferID].pBytes != nullptr)
-          pIndexBuffer = &pScene->pBuffers[bufferID];
+          pIndexBuffer = (pScene->pBuffers[bufferID].pBytes + offset);
       }
     }
 
@@ -139,7 +429,7 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
       else if (maxCount != attributeCount)
         __debugbreak();
 
-      if (attributeType != 5126) // Float
+      if (attributeType != vcGLTFType_F32)
         __debugbreak();
 
       if (udStrEqual(pAttributeName, "POSITION"))
@@ -180,6 +470,7 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
         const udJSON& accessor = root.Get("accessors[%d]", attributeAccessorIndex);
 
         const char* pAccessorType = accessor.Get("type").AsString();
+        ptrdiff_t offset = accessor.Get("byteOffset").AsInt64();
 
         int bufferID = root.Get("bufferViews[%d].buffer", accessor.Get("bufferView").AsInt(-1)).AsInt();
         if (bufferID <= -1)
@@ -189,10 +480,10 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
         {
           if (udStrEqual(pAccessorType, "VEC3"))
           {
-            float *pFloats = (float*)pScene->pBuffers[bufferID].pBytes;
-            pVertFloats[vi * totalAttributes * 6 + ai * 3 + 0] = pFloats[vi * 3 + 0];
-            pVertFloats[vi * totalAttributes * 6 + ai * 3 + 1] = pFloats[vi * 3 + 1];
-            pVertFloats[vi * totalAttributes * 6 + ai * 3 + 2] = pFloats[vi * 3 + 2];
+            float *pFloats = (float*)(pScene->pBuffers[bufferID].pBytes + offset);
+            pVertFloats[vi * totalAttributes * 3 + ai * 3 + 0] = pFloats[vi * 3 + 0];
+            pVertFloats[vi * totalAttributes * 3 + ai * 3 + 1] = pFloats[vi * 3 + 1];
+            pVertFloats[vi * totalAttributes * 3 + ai * 3 + 2] = pFloats[vi * 3 + 2];
           }
           else
           {
@@ -202,12 +493,18 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
       }
     }
 
-    vcShader_CreateFromFile()
-
+    if (s_pBasicShader == nullptr)
+    {
+      const char* defines[] = { "HAS_NORMALS", "MATERIAL_METALLICROUGHNESS", "USE_PUNCTUAL" };
+      vcShader_CreateFromFile(&s_pBasicShader, "asset://assets/shaders/gltfVertexShader", "asset://assets/shaders/gltfFragmentShader", pTypes, totalAttributes, defines, udLengthOf(defines));
+      vcShader_GetConstantBuffer(&s_pBasicShaderVertUniformBuffer, s_pBasicShader, "u_EveryFrame", sizeof(s_gltfVertInfo));
+      vcShader_GetConstantBuffer(&s_pBasicShaderFragUniformBuffer, s_pBasicShader, "u_FragSettings", sizeof(s_gltfFragInfo));
+    }
+    
     if (pIndexBuffer == nullptr)
-      vcMesh_Create(&pScene->ppMeshes[meshID], pTypes, totalAttributes, pVertData, maxCount, nullptr, 0, vcMF_NoIndexBuffer);
+      vcMesh_Create(&pScene->ppMeshes[meshID], pTypes, totalAttributes, pVertData, maxCount, nullptr, 0, vcMF_NoIndexBuffer | meshFlags);
     else
-      vcMesh_Create(&pScene->ppMeshes[meshID], pTypes, totalAttributes, pVertData, maxCount, pIndexBuffer->pBytes, indexCount);
+      vcMesh_Create(&pScene->ppMeshes[meshID], pTypes, totalAttributes, pVertData, maxCount, pIndexBuffer, indexCount, meshFlags);
   
     udFree(pTypes);
   }
@@ -316,13 +613,41 @@ void vcGLTF_Destroy(vcGLTFScene **ppScene)
   udFree(pScene);
 }
 
-udResult vcGLTF_Render(vcGLTFScene *pScene, udDouble4x4 globalMatrix)
+udResult vcGLTF_Render(vcGLTFScene *pScene, udDouble3 cameraPosition, udDouble4x4 worldMatrix, udDouble4x4 viewMatrix, udDouble4x4 projectionMatrix)
 {
+  vcShader_Bind(s_pBasicShader);
+
   for (size_t i = 0; i < pScene->meshInstances.length; ++i)
+  {
+    s_gltfVertInfo.u_ModelMatrix = udFloat4x4::create(worldMatrix * pScene->meshInstances[i].matrix);
+    s_gltfVertInfo.u_ViewProjectionMatrix = udFloat4x4::create(projectionMatrix * viewMatrix);
+    s_gltfVertInfo.u_NormalMatrix = udFloat4x4::create(udTranspose(udInverse(worldMatrix * pScene->meshInstances[i].matrix)));
+    vcShader_BindConstantBuffer(s_pBasicShader, s_pBasicShaderVertUniformBuffer, &s_gltfVertInfo, sizeof(s_gltfVertInfo));
+
+    s_gltfFragInfo.u_Camera = udFloat3::create(cameraPosition);
+    s_gltfFragInfo.u_Exposure = 1.f;
+    s_gltfFragInfo.u_EmissiveFactor = udFloat3::create(0.0f, 0.0f, 0.0f);
+    s_gltfFragInfo.u_NormalScale = 1.f;
+
+    // Lights
+    s_gltfFragInfo.u_Lights[0].direction = { 1.f, 0.f, 0.f };
+    s_gltfFragInfo.u_Lights[0].range = 50.f;
+    s_gltfFragInfo.u_Lights[0].color = { 1.f, 1.f, 1.f };
+    s_gltfFragInfo.u_Lights[0].intensity = 100.f;
+    s_gltfFragInfo.u_Lights[0].position = { -10.f, 0.f, 0.f };
+    s_gltfFragInfo.u_Lights[0].innerConeCos = 0.003f;
+    s_gltfFragInfo.u_Lights[0].outerConeCos = 0.707f;
+    s_gltfFragInfo.u_Lights[0].type = 2;
+
+    //Metallic/Roughness
+    s_gltfFragInfo.u_BaseColorFactor = { 0.8f, 0.f, 0.f, 1.f };
+    s_gltfFragInfo.u_MetallicFactor = 0.25f;
+    s_gltfFragInfo.u_RoughnessFactor = 0.25f;
+
+    vcShader_BindConstantBuffer(s_pBasicShader, s_pBasicShaderFragUniformBuffer, &s_gltfFragInfo, sizeof(s_gltfFragInfo));
+
     vcMesh_Render(pScene->ppMeshes[pScene->meshInstances[i].meshID]);
+  }
 
-  udUnused(pScene);
-  udUnused(globalMatrix);
-
-  return udR_Unsupported;
+  return udR_Success;
 }

@@ -1,134 +1,203 @@
+cbuffer u_cameraPlaneParams
+{
+  float s_CameraNearPlane;
+  float s_CameraFarPlane;
+  float u_clipZNear;
+  float u_clipZFar;
+}; 
+
+cbuffer u_EveryFrame : register(b0)
+{
+  float4x4 u_ViewProjectionMatrix;
+  float4x4 u_ModelMatrix;
+  float4x4 u_NormalMatrix;
+
+#ifdef USE_MORPHING
+  uniform float u_morphWeights[WEIGHT_COUNT];
+#endif
+
+#ifdef USE_SKINNING
+  float4x4 u_jointMatrix[JOINT_COUNT];
+  float4x4 u_jointNormalMatrix[JOINT_COUNT];
+#endif
+}
+
+struct VS_INPUT
+{
+  float3 a_Position : POSITION;
+
+#ifdef HAS_NORMALS
+  float3 a_Normal : NORMAL;
+#endif
+
+#ifdef HAS_TANGENTS
+  float4 a_Tangent : TANGENT;
+#endif
+
+#ifdef HAS_UV_SET1
+  float2 a_UV1 : TEXCOORD0;
+#endif
+
+#ifdef HAS_UV_SET2
+  float2 a_UV2 : TEXCOORD1;
+#endif
+
+#ifdef HAS_VERTEX_COLOR_float3
+  float3 a_Color : COLOR0;
+#endif
+
+#ifdef HAS_VERTEX_COLOR_float4
+  float4 a_Color : COLOR0;
+#endif
+
 #ifdef HAS_TARGET_POSITION0
-in vec3 a_Target_Position0;
+  float3 a_Target_Position0;
 #endif
 
 #ifdef HAS_TARGET_POSITION1
-in vec3 a_Target_Position1;
+  float3 a_Target_Position1;
 #endif
 
 #ifdef HAS_TARGET_POSITION2
-in vec3 a_Target_Position2;
+  float3 a_Target_Position2;
 #endif
 
 #ifdef HAS_TARGET_POSITION3
-in vec3 a_Target_Position3;
+  float3 a_Target_Position3;
 #endif
 
 #ifdef HAS_TARGET_POSITION4
-in vec3 a_Target_Position4;
+  float3 a_Target_Position4;
 #endif
 
 #ifdef HAS_TARGET_POSITION5
-in vec3 a_Target_Position5;
+  float3 a_Target_Position5;
 #endif
 
 #ifdef HAS_TARGET_POSITION6
-in vec3 a_Target_Position6;
+  float3 a_Target_Position6;
 #endif
 
 #ifdef HAS_TARGET_POSITION7
-in vec3 a_Target_Position7;
+  float3 a_Target_Position7;
 #endif
 
 #ifdef HAS_TARGET_NORMAL0
-in vec3 a_Target_Normal0;
+  float3 a_Target_Normal0;
 #endif
 
 #ifdef HAS_TARGET_NORMAL1
-in vec3 a_Target_Normal1;
+  float3 a_Target_Normal1;
 #endif
 
 #ifdef HAS_TARGET_NORMAL2
-in vec3 a_Target_Normal2;
+  float3 a_Target_Normal2;
 #endif
 
 #ifdef HAS_TARGET_NORMAL3
-in vec3 a_Target_Normal3;
+  float3 a_Target_Normal3;
 #endif
 
 #ifdef HAS_TARGET_TANGENT0
-in vec3 a_Target_Tangent0;
+  float3 a_Target_Tangent0;
 #endif
 
 #ifdef HAS_TARGET_TANGENT1
-in vec3 a_Target_Tangent1;
+  float3 a_Target_Tangent1;
 #endif
 
 #ifdef HAS_TARGET_TANGENT2
-in vec3 a_Target_Tangent2;
+  float3 a_Target_Tangent2;
 #endif
 
 #ifdef HAS_TARGET_TANGENT3
-in vec3 a_Target_Tangent3;
-#endif
-
-#ifdef USE_MORPHING
-uniform float u_morphWeights[WEIGHT_COUNT];
+  float3 a_Target_Tangent3;
 #endif
 
 #ifdef HAS_JOINT_SET1
-in vec4 a_Joint1;
+  float4 a_Joint1;
 #endif
 
 #ifdef HAS_JOINT_SET2
-in vec4 a_Joint2;
+  float4 a_Joint2;
 #endif
 
 #ifdef HAS_WEIGHT_SET1
-in vec4 a_Weight1;
+  float4 a_Weight1;
 #endif
 
 #ifdef HAS_WEIGHT_SET2
-in vec4 a_Weight2;
+  float4 a_Weight2;
 #endif
+};
 
-#ifdef USE_SKINNING
-uniform mat4 u_jointMatrix[JOINT_COUNT];
-uniform mat4 u_jointNormalMatrix[JOINT_COUNT];
-#endif
-
-#ifdef USE_SKINNING
-mat4 getSkinningMatrix()
+struct PS_INPUT
 {
-    mat4 skin = mat4(0);
+  float4 s_Position : SV_POSITION;
+  float3 v_Position : POSITION0;
+
+#ifdef HAS_NORMALS
+#ifdef HAS_TANGENTS
+  float3x3 v_TBN : NORMAL;
+#else
+  float3 v_Normal : NORMAL;
+#endif
+#endif
+
+  float2 v_UVCoord1 : TEXCOORD0;
+  float2 v_UVCoord2 : TEXCOORD1;
+
+#ifdef HAS_VERTEX_COLOR_float3
+  out float3 v_Color : COLOR0;
+#endif
+
+#ifdef HAS_VERTEX_COLOR_float4
+  out float4 v_Color : COLOR0;
+#endif
+};
+
+#ifdef USE_SKINNING
+float4x4 getSkinningMatrix(VS_INPUT input)
+{
+    float4x4 sk= float4x4(0);
 
     #if defined(HAS_WEIGHT_SET1) && defined(HAS_JOINT_SET1)
-    skin +=
-        a_Weight1.x * u_jointMatrix[int(a_Joint1.x)] +
-        a_Weight1.y * u_jointMatrix[int(a_Joint1.y)] +
-        a_Weight1.z * u_jointMatrix[int(a_Joint1.z)] +
-        a_Weight1.w * u_jointMatrix[int(a_Joint1.w)];
+    sk+=
+        input.a_Weight1.x * u_jointMatrix[int(input.a_Joint1.x)] +
+        input.a_Weight1.y * u_jointMatrix[int(input.a_Joint1.y)] +
+        input.a_Weight1.z * u_jointMatrix[int(input.a_Joint1.z)] +
+        input.a_Weight1.w * u_jointMatrix[int(input.a_Joint1.w)];
     #endif
 
     #if defined(HAS_WEIGHT_SET2) && defined(HAS_JOINT_SET2)
-    skin +=
-        a_Weight2.x * u_jointMatrix[int(a_Joint2.x)] +
-        a_Weight2.y * u_jointMatrix[int(a_Joint2.y)] +
-        a_Weight2.z * u_jointMatrix[int(a_Joint2.z)] +
-        a_Weight2.w * u_jointMatrix[int(a_Joint2.w)];
+    sk+=
+        input.a_Weight2.x * u_jointMatrix[int(input.a_Joint2.x)] +
+        input.a_Weight2.y * u_jointMatrix[int(input.a_Joint2.y)] +
+        input.a_Weight2.z * u_jointMatrix[int(input.a_Joint2.z)] +
+        input.a_Weight2.w * u_jointMatrix[int(input.a_Joint2.w)];
     #endif
 
     return skin;
 }
 
-mat4 getSkinningNormalMatrix()
+float4x4 getSkinningNormalMatrix(VS_INPUT input)
 {
-    mat4 skin = mat4(0);
+    float4x4 sk= float4x4(0);
 
     #if defined(HAS_WEIGHT_SET1) && defined(HAS_JOINT_SET1)
-    skin +=
-        a_Weight1.x * u_jointNormalMatrix[int(a_Joint1.x)] +
-        a_Weight1.y * u_jointNormalMatrix[int(a_Joint1.y)] +
-        a_Weight1.z * u_jointNormalMatrix[int(a_Joint1.z)] +
-        a_Weight1.w * u_jointNormalMatrix[int(a_Joint1.w)];
+    sk+=
+        input.a_Weight1.x * u_jointNormalMatrix[int(input.a_Joint1.x)] +
+        input.a_Weight1.y * u_jointNormalMatrix[int(input.a_Joint1.y)] +
+        input.a_Weight1.z * u_jointNormalMatrix[int(input.a_Joint1.z)] +
+        input.a_Weight1.w * u_jointNormalMatrix[int(input.a_Joint1.w)];
     #endif
 
     #if defined(HAS_WEIGHT_SET2) && defined(HAS_JOINT_SET2)
-    skin +=
-        a_Weight2.x * u_jointNormalMatrix[int(a_Joint2.x)] +
-        a_Weight2.y * u_jointNormalMatrix[int(a_Joint2.y)] +
-        a_Weight2.z * u_jointNormalMatrix[int(a_Joint2.z)] +
-        a_Weight2.w * u_jointNormalMatrix[int(a_Joint2.w)];
+    sk+=
+        input.a_Weight2.x * u_jointNormalMatrix[int(input.a_Joint2.x)] +
+        input.a_Weight2.y * u_jointNormalMatrix[int(input.a_Joint2.y)] +
+        input.a_Weight2.z * u_jointNormalMatrix[int(input.a_Joint2.z)] +
+        input.a_Weight2.w * u_jointNormalMatrix[int(input.a_Joint2.w)];
     #endif
 
     return skin;
@@ -136,82 +205,82 @@ mat4 getSkinningNormalMatrix()
 #endif // !USE_SKINNING
 
 #ifdef USE_MORPHING
-vec4 getTargetPosition()
+float4 getTargetPosition(VS_INPUT input)
 {
-    vec4 pos = vec4(0);
+    float4 pos = float4(0);
 
 #ifdef HAS_TARGET_POSITION0
-    pos.xyz += u_morphWeights[0] * a_Target_Position0;
+    pos.xyz += u_morphWeights[0] * input.a_Target_Position0;
 #endif
 
 #ifdef HAS_TARGET_POSITION1
-    pos.xyz += u_morphWeights[1] * a_Target_Position1;
+    pos.xyz += u_morphWeights[1] * input.a_Target_Position1;
 #endif
 
 #ifdef HAS_TARGET_POSITION2
-    pos.xyz += u_morphWeights[2] * a_Target_Position2;
+    pos.xyz += u_morphWeights[2] * input.a_Target_Position2;
 #endif
 
 #ifdef HAS_TARGET_POSITION3
-    pos.xyz += u_morphWeights[3] * a_Target_Position3;
+    pos.xyz += u_morphWeights[3] * input.a_Target_Position3;
 #endif
 
 #ifdef HAS_TARGET_POSITION4
-    pos.xyz += u_morphWeights[4] * a_Target_Position4;
+    pos.xyz += u_morphWeights[4] * input.a_Target_Position4;
 #endif
 
     return pos;
 }
 
-vec3 getTargetNormal()
+float3 getTargetNormal(VS_INPUT input)
 {
-    vec3 normal = vec3(0);
+    float3 normal = float3(0);
 
 #ifdef HAS_TARGET_NORMAL0
-    normal += u_morphWeights[0] * a_Target_Normal0;
+    normal += u_morphWeights[0] * input.a_Target_Normal0;
 #endif
 
 #ifdef HAS_TARGET_NORMAL1
-    normal += u_morphWeights[1] * a_Target_Normal1;
+    normal += u_morphWeights[1] * input.a_Target_Normal1;
 #endif
 
 #ifdef HAS_TARGET_NORMAL2
-    normal += u_morphWeights[2] * a_Target_Normal2;
+    normal += u_morphWeights[2] * input.a_Target_Normal2;
 #endif
 
 #ifdef HAS_TARGET_NORMAL3
-    normal += u_morphWeights[3] * a_Target_Normal3;
+    normal += u_morphWeights[3] * input.a_Target_Normal3;
 #endif
 
 #ifdef HAS_TARGET_NORMAL4
-    normal += u_morphWeights[4] * a_Target_Normal4;
+    normal += u_morphWeights[4] * input.a_Target_Normal4;
 #endif
 
     return normal;
 }
 
-vec3 getTargetTangent()
+float3 getTargetTangent(VS_INPUT input)
 {
-    vec3 tangent = vec3(0);
+    float3 tangent = float3(0);
 
 #ifdef HAS_TARGET_TANGENT0
-    tangent += u_morphWeights[0] * a_Target_Tangent0;
+    tangent += u_morphWeights[0] * input.a_Target_Tangent0;
 #endif
 
 #ifdef HAS_TARGET_TANGENT1
-    tangent += u_morphWeights[1] * a_Target_Tangent1;
+    tangent += u_morphWeights[1] * input.a_Target_Tangent1;
 #endif
 
 #ifdef HAS_TARGET_TANGENT2
-    tangent += u_morphWeights[2] * a_Target_Tangent2;
+    tangent += u_morphWeights[2] * input.a_Target_Tangent2;
 #endif
 
 #ifdef HAS_TARGET_TANGENT3
-    tangent += u_morphWeights[3] * a_Target_Tangent3;
+    tangent += u_morphWeights[3] * input.a_Target_Tangent3;
 #endif
 
 #ifdef HAS_TARGET_TANGENT4
-    tangent += u_morphWeights[4] * a_Target_Tangent4;
+    tangent += u_morphWeights[4] * input.a_Target_Tangent4;
 #endif
 
     return tangent;
@@ -219,76 +288,32 @@ vec3 getTargetTangent()
 
 #endif // !USE_MORPHING
 
-in vec3 a_Position;
-out vec3 v_Position;
-
-#ifdef HAS_NORMALS
-in vec3 a_Normal;
-#endif
-
-#ifdef HAS_TANGENTS
-in vec4 a_Tangent;
-#endif
-
-#ifdef HAS_NORMALS
-#ifdef HAS_TANGENTS
-out mat3 v_TBN;
-#else
-out vec3 v_Normal;
-#endif
-#endif
-
-#ifdef HAS_UV_SET1
-in vec2 a_UV1;
-#endif
-
-#ifdef HAS_UV_SET2
-in vec2 a_UV2;
-#endif
-
-out vec2 v_UVCoord1;
-out vec2 v_UVCoord2;
-
-#ifdef HAS_VERTEX_COLOR_VEC3
-in vec3 a_Color;
-out vec3 v_Color;
-#endif
-
-#ifdef HAS_VERTEX_COLOR_VEC4
-in vec4 a_Color;
-out vec4 v_Color;
-#endif
-
-uniform mat4 u_ViewProjectionMatrix;
-uniform mat4 u_ModelMatrix;
-uniform mat4 u_NormalMatrix;
-
-vec4 getPosition()
+float4 getPosition(VS_INPUT input)
 {
-    vec4 pos = vec4(a_Position, 1.0);
+    float4 pos = float4(input.a_Position, 1.0);
 
 #ifdef USE_MORPHING
-    pos += getTargetPosition();
+    pos += getTargetPosition(input);
 #endif
 
 #ifdef USE_SKINNING
-    pos = getSkinningMatrix() * pos;
+    pos = getSkinningMatrix(input) * pos;
 #endif
 
     return pos;
 }
 
 #ifdef HAS_NORMALS
-vec3 getNormal()
+float3 getNormal(VS_INPUT input)
 {
-    vec3 normal = a_Normal;
+    float3 normal = input.a_Normal;
 
 #ifdef USE_MORPHING
-    normal += getTargetNormal();
+    normal += getTargetNormal(input);
 #endif
 
 #ifdef USE_SKINNING
-    normal = mat3(getSkinningNormalMatrix()) * normal;
+    normal = float3x3(getSkinningNormalMatrix(input)) * normal;
 #endif
 
     return normalize(normal);
@@ -296,53 +321,57 @@ vec3 getNormal()
 #endif
 
 #ifdef HAS_TANGENTS
-vec3 getTangent()
+float3 getTangent(VS_INPUT input)
 {
-    vec3 tangent = a_Tangent.xyz;
+    float3 tangent = input.a_Tangent.xyz;
 
 #ifdef USE_MORPHING
-    tangent += getTargetTangent();
+    tangent += getTargetTangent(input);
 #endif
 
 #ifdef USE_SKINNING
-    tangent = mat3(getSkinningMatrix()) * tangent;
+    tangent = float3x3(getSkinningMatrix(input)) * tangent;
 #endif
 
     return normalize(tangent);
 }
 #endif
 
-void main()
+PS_INPUT main(VS_INPUT input)
 {
-    vec4 pos = u_ModelMatrix * getPosition();
-    v_Position = vec3(pos.xyz) / pos.w;
+  PS_INPUT output;
 
-    #ifdef HAS_NORMALS
-    #ifdef HAS_TANGENTS
-        vec3 tangent = getTangent();
-        vec3 normalW = normalize(vec3(u_NormalMatrix * vec4(getNormal(), 0.0)));
-        vec3 tangentW = normalize(vec3(u_ModelMatrix * vec4(tangent, 0.0)));
-        vec3 bitangentW = cross(normalW, tangentW) * a_Tangent.w;
-        v_TBN = mat3(tangentW, bitangentW, normalW);
-    #else // !HAS_TANGENTS
-        v_Normal = normalize(vec3(u_NormalMatrix * vec4(getNormal(), 0.0)));
-    #endif
-    #endif // !HAS_NORMALS
+  float4 pos = mul(u_ModelMatrix, getPosition(input));
+  output.v_Position = float3(pos.xyz) / pos.w;
 
-    v_UVCoord1 = vec2(0.0, 0.0);
-    v_UVCoord2 = vec2(0.0, 0.0);
+#ifdef HAS_NORMALS
+#ifdef HAS_TANGENTS
+  float3 tangent = getTangent(input);
+  float3 normalW = normalize(mul(u_NormalMatrix, float4(getNormal(input), 0.0)).xyz);
+  float3 tangentW = normalize(mul(u_ModelMatrix, float4(tangent, 0.0)).xyz);
+  float3 bitangentW = cross(normalW, tangentW) * input.a_Tangent.w;
+  output.v_TBN = float4x43(tangentW, bitangentW, normalW);
+#else // !HAS_TANGENTS
+  output.v_Normal = normalize(mul(u_NormalMatrix, float4(getNormal(input), 0.0)).xyz);
+#endif
+#endif // !HAS_NORMALS
 
-    #ifdef HAS_UV_SET1
-        v_UVCoord1 = a_UV1;
-    #endif
+  output.v_UVCoord1 = float2(0.0, 0.0);
+  output.v_UVCoord2 = float2(0.0, 0.0);
 
-    #ifdef HAS_UV_SET2
-        v_UVCoord2 = a_UV2;
-    #endif
+#ifdef HAS_UV_SET1
+  output.v_UVCoord1 = input.a_UV1;
+#endif
 
-    #if defined(HAS_VERTEX_COLOR_VEC3) || defined(HAS_VERTEX_COLOR_VEC4)
-        v_Color = a_Color;
-    #endif
+#ifdef HAS_UV_SET2
+  output.v_UVCoord2 = input.a_UV2;
+#endif
 
-    gl_Position = u_ViewProjectionMatrix * pos;
+#if defined(HAS_VERTEX_COLOR_float3) || defined(HAS_VERTEX_COLOR_float4)
+  output.v_Color = input.a_Color;
+#endif
+
+  output.s_Position = mul(u_ViewProjectionMatrix, pos);
+
+  return output;
 }
