@@ -58,7 +58,7 @@ vcShaderConstantBuffer *s_pBasicShaderVertUniformBuffer = nullptr;
 vcShaderConstantBuffer *s_pBasicShaderFragUniformBuffer = nullptr;
 
 #ifndef LIGHT_COUNT
-# define LIGHT_COUNT 1
+# define LIGHT_COUNT 2
 #endif
 
 /*struct udFloat3x3
@@ -630,14 +630,21 @@ udResult vcGLTF_Render(vcGLTFScene *pScene, udDouble3 cameraPosition, udDouble4x
     s_gltfFragInfo.u_NormalScale = 1.f;
 
     // Lights
-    s_gltfFragInfo.u_Lights[0].direction = { 1.f, 0.f, 0.f };
-    s_gltfFragInfo.u_Lights[0].range = 50.f;
-    s_gltfFragInfo.u_Lights[0].color = { 1.f, 1.f, 1.f };
+    // Directional Lights
+    s_gltfFragInfo.u_Lights[0].direction = { 0.f, -0.5f, -0.5f };
+    s_gltfFragInfo.u_Lights[0].color = { 0.9f, 0.8f, 1.f };
     s_gltfFragInfo.u_Lights[0].intensity = 100.f;
-    s_gltfFragInfo.u_Lights[0].position = { -10.f, 0.f, 0.f };
-    s_gltfFragInfo.u_Lights[0].innerConeCos = 0.003f;
-    s_gltfFragInfo.u_Lights[0].outerConeCos = 0.707f;
-    s_gltfFragInfo.u_Lights[0].type = 2;
+    s_gltfFragInfo.u_Lights[0].type = 0;
+
+    // Spotlight
+    s_gltfFragInfo.u_Lights[1].direction = { 1.f, 0.f, 0.f };
+    s_gltfFragInfo.u_Lights[1].range = 50.f;
+    s_gltfFragInfo.u_Lights[1].color = { 1.f, 1.f, 1.f };
+    s_gltfFragInfo.u_Lights[1].intensity = 100.f;
+    s_gltfFragInfo.u_Lights[1].position = { -10.f, 0.f, 0.f };
+    s_gltfFragInfo.u_Lights[1].innerConeCos = 0.003f;
+    s_gltfFragInfo.u_Lights[1].outerConeCos = 0.707f;
+    s_gltfFragInfo.u_Lights[1].type = 2;
 
     //Metallic/Roughness
     s_gltfFragInfo.u_BaseColorFactor = { 0.8f, 0.f, 0.f, 1.f };

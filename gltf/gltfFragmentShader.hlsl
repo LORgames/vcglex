@@ -21,7 +21,7 @@
 //     https://github.com/ux3d/glTF/tree/extensions/KHR_materials_thinfilm/extensions/2.0/Khronos/KHR_materials_thinfilm
 
 #ifndef LIGHT_COUNT
-# define LIGHT_COUNT 1
+# define LIGHT_COUNT 2
 #endif
 
 struct PS_INPUT
