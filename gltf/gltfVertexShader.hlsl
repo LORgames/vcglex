@@ -25,10 +25,7 @@ cbuffer u_EveryFrame : register(b0)
 struct VS_INPUT
 {
   float3 a_Position : POSITION;
-
-#ifdef HAS_NORMALS
   float3 a_Normal : NORMAL;
-#endif
 
 #ifdef HAS_TANGENTS
   float4 a_Tangent : TANGENT;
@@ -136,12 +133,10 @@ struct PS_INPUT
   float4 s_Position : SV_POSITION;
   float3 v_Position : POSITION0;
 
-#ifdef HAS_NORMALS
 #ifdef HAS_TANGENTS
   float3x3 v_TBN : NORMAL;
 #else
   float3 v_Normal : NORMAL;
-#endif
 #endif
 
   float2 v_UVCoord1 : TEXCOORD0;
@@ -303,7 +298,6 @@ float4 getPosition(VS_INPUT input)
     return pos;
 }
 
-#ifdef HAS_NORMALS
 float3 getNormal(VS_INPUT input)
 {
     float3 normal = input.a_Normal;
@@ -318,7 +312,6 @@ float3 getNormal(VS_INPUT input)
 
     return normalize(normal);
 }
-#endif
 
 #ifdef HAS_TANGENTS
 float3 getTangent(VS_INPUT input)
@@ -344,17 +337,14 @@ PS_INPUT main(VS_INPUT input)
   float4 pos = mul(u_ModelMatrix, getPosition(input));
   output.v_Position = float3(pos.xyz) / pos.w;
 
-#ifdef HAS_NORMALS
 #ifdef HAS_TANGENTS
-  float3 tangent = getTangent(input);
   float3 normalW = normalize(mul(u_NormalMatrix, float4(getNormal(input), 0.0)).xyz);
-  float3 tangentW = normalize(mul(u_ModelMatrix, float4(tangent, 0.0)).xyz);
+  float3 tangentW = normalize(mul(u_ModelMatrix, float4(getTangent(input), 0.0)).xyz);
   float3 bitangentW = cross(normalW, tangentW) * input.a_Tangent.w;
-  output.v_TBN = float4x43(tangentW, bitangentW, normalW);
+  output.v_TBN = float3x3(tangentW, bitangentW, normalW);
 #else // !HAS_TANGENTS
   output.v_Normal = normalize(mul(u_NormalMatrix, float4(getNormal(input), 0.0)).xyz);
 #endif
-#endif // !HAS_NORMALS
 
   output.v_UVCoord1 = float2(0.0, 0.0);
   output.v_UVCoord2 = float2(0.0, 0.0);

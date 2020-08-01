@@ -29,12 +29,10 @@ struct PS_INPUT
   float4 s_Position : SV_POSITION;
   float3 v_Position : POSITION0;
 
-#ifdef HAS_NORMALS
 #ifdef HAS_TANGENTS
   float3x3 v_TBN : NORMAL;
 #else
   float3 v_Normal : NORMAL;
-#endif
 #endif
 
   float2 v_UVCoord1 : TEXCOORD0;
@@ -97,15 +95,15 @@ cbuffer u_FragSettings : register(b0)
   float u_Exposure;
   float3 u_EmissiveFactor;
 
-  float u_NormalScale; // Only used with HAS_NORMALS but serves as padding otherwise
+  float u_NormalScale;
 
   // Metallic Roughness
 #ifdef MATERIAL_METALLICROUGHNESS
   float4 u_BaseColorFactor;
   float u_MetallicFactor;
   float u_RoughnessFactor;
-  int u_BaseColorUVSet; // Only needed with HAS_BASE_COLOR_MAP
-  int u_MetallicRoughnessUVSet; // Only needed with HAS_METALLIC_ROUGHNESS_MAP
+  int u_BaseColorUVSet;
+  int u_MetallicRoughnessUVSet;
 
 # ifdef HAS_BASECOLOR_UV_TRANSFORM
   float3x3 u_BaseColorUVTransform;
@@ -149,38 +147,34 @@ cbuffer u_FragSettings : register(b0)
 #endif
 
   // General Material
-#ifdef HAS_NORMAL_MAP
   int u_NormalUVSet;
-# ifdef HAS_NORMAL_UV_TRANSFORM
-  float3x3 u_NormalUVTransform;
-# endif
-#endif
-
-#ifdef HAS_EMISSIVE_MAP
   int u_EmissiveUVSet;
-# ifdef HAS_EMISSIVE_UV_TRANSFORM
-  float3x3 u_EmissiveUVTransform;
-# endif
-#endif
-
-#ifdef HAS_OCCLUSION_MAP
   int u_OcclusionUVSet;
   float u_OcclusionStrength;
+
+  // Alpha mode
+  int u_alphaMode; // 0 = OPAQUE, 1 = ALPHAMASK, 2 = BLEND
+  float u_AlphaCutoff;
+
+  float2 __padding;
+
+#ifdef HAS_NORMAL_UV_TRANSFORM
+  float3x3 u_NormalUVTransform;
+#endif
+
+#ifdef HAS_EMISSIVE_UV_TRANSFORM
+  float3x3 u_EmissiveUVTransform;
+#endif
+
 # ifdef HAS_OCCLUSION_UV_TRANSFORM
   float3x3 u_OcclusionUVTransform;
 # endif
-#endif
 
 #ifdef USE_PUNCTUAL
   Light u_Lights[LIGHT_COUNT];
 #endif
 
-  // Alpha mode
-#ifdef ALPHAMODE_MASK
-  float u_AlphaCutoff;
-#endif
-
-#ifdef USE_UBL
+#ifdef USE_IBL
   // IBL
   int u_MipCount;
 #endif
@@ -460,70 +454,85 @@ float3 toneMap(float3 color)
   return linearTosRGB(color);
 }
 
-#ifdef HAS_NORMAL_MAP
 float2 getNormalUV(PS_INPUT input)
 {
-  float3 uv = float3(u_NormalUVSet < 1 ? input.v_UVCoord1 : input.v_UVCoord2, 1.0);
+  float3 uv = float3(0.0, 0.0, 0.0);
+
+  if (u_NormalUVSet >= 0)
+  {
+    uv = float3(u_NormalUVSet < 1 ? input.v_UVCoord1 : input.v_UVCoord2, 1.0);
 
 #ifdef HAS_NORMAL_UV_TRANSFORM
-  uv *= u_NormalUVTransform;
+    uv *= u_NormalUVTransform;
 #endif
+  }
 
   return uv.xy;
 }
-#endif
 
-#ifdef HAS_EMISSIVE_MAP
 float2 getEmissiveUV(PS_INPUT input)
 {
-  float3 uv = float3(u_EmissiveUVSet < 1 ? input.v_UVCoord1 : input.v_UVCoord2, 1.0);
+  float3 uv = float3(0.0, 0.0, 0.0);
+
+  if (u_EmissiveUVSet >= 0)
+  {
+    uv = float3(u_EmissiveUVSet < 1 ? input.v_UVCoord1 : input.v_UVCoord2, 1.0);
 
 #ifdef HAS_EMISSIVE_UV_TRANSFORM
-  uv *= u_EmissiveUVTransform;
+    uv *= u_EmissiveUVTransform;
 #endif
+  }
 
   return uv.xy;
 }
-#endif
 
-#ifdef HAS_OCCLUSION_MAP
 float2 getOcclusionUV(PS_INPUT input)
 {
-  float3 uv = float3(u_OcclusionUVSet < 1 ? input.v_UVCoord1 : input.v_UVCoord2, 1.0);
+  float3 uv = float3(0.0, 0.0, 0.0);
+
+  if (u_OcclusionUVSet >= 0)
+  {
+    uv = float3(u_OcclusionUVSet < 1 ? input.v_UVCoord1 : input.v_UVCoord2, 1.0);
 
 #ifdef HAS_OCCLUSION_UV_TRANSFORM
-  uv *= u_OcclusionUVTransform;
+    uv *= u_OcclusionUVTransform;
 #endif
+  }
 
   return uv.xy;
 }
-#endif
 
-#ifdef HAS_BASE_COLOR_MAP
 float2 getBaseColorUV(PS_INPUT input)
 {
-  float3 uv = float3(u_BaseColorUVSet < 1 ? input.v_UVCoord1 : input.v_UVCoord2, 1.0);
+  float3 uv = float3(0.0, 0.0, 0.0);
+
+  if (u_BaseColorUVSet >= 0)
+  {
+    uv = float3(u_BaseColorUVSet < 1 ? input.v_UVCoord1 : input.v_UVCoord2, 1.0);
 
 #ifdef HAS_BASECOLOR_UV_TRANSFORM
-  uv *= u_BaseColorUVTransform;
+    uv *= u_BaseColorUVTransform;
 #endif
+  }
 
   return uv.xy;
 }
-#endif
 
-#ifdef HAS_METALLIC_ROUGHNESS_MAP
 float2 getMetallicRoughnessUV(PS_INPUT input)
 {
-  float3 uv = float3(u_MetallicRoughnessUVSet < 1 ? input.v_UVCoord1 : input.v_UVCoord2, 1.0);
+  float3 uv = float3(0.0, 0.0, 0.0);
+
+  if (u_MetallicRoughnessUVSet >= 0)
+  {
+    uv = float3(u_MetallicRoughnessUVSet < 1 ? input.v_UVCoord1 : input.v_UVCoord2, 1.0);
 
 #ifdef HAS_METALLICROUGHNESS_UV_TRANSFORM
-  uv *= u_MetallicRoughnessUVTransform;
+    uv *= u_MetallicRoughnessUVTransform;
 #endif
+  }
 
   return uv.xy;
 }
-#endif
 
 #ifdef HAS_SPECULAR_GLOSSINESS_MAP
 float2 getSpecularGlossinessUV(PS_INPUT input)
@@ -1040,11 +1049,7 @@ float3 getIBLRadianceSubsurface(float3 n, float3 v, float scale, float distortio
 // Get normal, tangent and bitangent vectors.
 NormalInfo getNormalInfo(PS_INPUT input, float3 v)
 {
-#ifdef HAS_NORMAL_MAP
   float2 UV = getNormalUV(input);
-#else
-  float2 UV = float2(0.0, 0.0);
-#endif
   float3 uv_dx = ddx(float3(UV, 0.0));
   float3 uv_dy = ddy(float3(UV, 0.0));
 
@@ -1060,13 +1065,8 @@ NormalInfo getNormalInfo(PS_INPUT input, float3 v)
   b = normalize(input.v_TBN[1]);
   ng = normalize(input.v_TBN[2]);
 #else
-    // Normals are either present as vertex attributes or approximated.
-#ifdef HAS_NORMALS
+  // Normals are either present as vertex attributes or approximated.
   ng = normalize(input.v_Normal);
-#else
-  ng = normalize(cross(ddx(input.v_Position), ddy(input.v_Position)));
-#endif
-
   t = normalize(t_ - ng * dot(ng, t_));
   b = cross(ng, t);
 #endif
@@ -1078,27 +1078,28 @@ NormalInfo getNormalInfo(PS_INPUT input, float3 v)
   ng *= facing;
 
   // Due to anisoptry, the tangent can be further rotated around the geometric normal.
-  float3 direction;
 #ifdef MATERIAL_ANISOTROPY
+  float3 direction = u_AnisotropyDirection;
+
 #ifdef HAS_ANISOTROPY_DIRECTION_MAP
-  direction = u_AnisotropyDirectionSampler.Sample(MeshTextureSampler, getAnisotropyDirectionUV(input)).xyz * 2.0 - float3(1.0);
-#else
-  direction = u_AnisotropyDirection;
+  direction = u_AnisotropyDirectionSampler.Sample(MeshTextureSampler, getAnisotropyDirectionUV(input)).xyz * 2.0 - 1.0;
 #endif
-#else
-  direction = float3(1.0, 0.0, 0.0);
-#endif
+
   t = mul(float3x3(t, b, ng), normalize(direction));
   b = normalize(cross(ng, t));
+#endif
 
   // Compute pertubed normals:
-#ifdef HAS_NORMAL_MAP
-  n = u_NormalSampler.Sample(MeshTextureSampler, UV).rgb * 2.0 - float3(1.0);
-  n *= float3(u_NormalScale, u_NormalScale, 1.0);
-  n = mul(float3x3(t, b, ng), normalize(n));
-#else
-  n = ng;
-#endif
+  if (u_NormalUVSet >= 0)
+  {
+    n = u_NormalSampler.Sample(MeshTextureSampler, UV).rgb * 2.0 - 1.0;
+    n = n * float3(u_NormalScale, u_NormalScale, 1.0);
+    n = mul(normalize(n), float3x3(t, b, ng));
+  }
+  else
+  {
+    n = ng;
+  }
 
   NormalInfo info;
   info.ng = ng;
@@ -1121,8 +1122,9 @@ float4 getBaseColor(PS_INPUT input)
 
 #if defined(MATERIAL_SPECULARGLOSSINESS) && defined(HAS_DIFFUSE_MAP)
   baseColor *= sRGBToLinear(u_DiffuseSampler.Sample(MeshTextureSampler, getDiffuseUV(input)));
-#elif defined(MATERIAL_METALLICROUGHNESS) && defined(HAS_BASE_COLOR_MAP)
-  baseColor *= sRGBToLinear(u_BaseColorSampler.Sample(MeshTextureSampler, getBaseColorUV(input)));
+#elif defined(MATERIAL_METALLICROUGHNESS)
+  if (u_BaseColorUVSet >= 0)
+    baseColor *= sRGBToLinear(u_BaseColorSampler.Sample(MeshTextureSampler, getBaseColorUV(input)));
 #endif
 
   return baseColor * getVertexColor(input);
@@ -1167,13 +1169,14 @@ MaterialInfo getMetallicRoughnessInfo(PS_INPUT input, MaterialInfo info, float f
   info.metallic = u_MetallicFactor;
   info.perceptualRoughness = u_RoughnessFactor;
 
-#ifdef HAS_METALLIC_ROUGHNESS_MAP
-  // Roughness is stored in the 'g' channel, metallic is stored in the 'b' channel.
-  // This layout intentionally reserves the 'r' channel for (optional) occlusion map data
-  float4 mrSample = u_MetallicRoughnessSampler.Sample(MeshTextureSampler, getMetallicRoughnessUV(input));
-  info.perceptualRoughness *= mrSample.g;
-  info.metallic *= mrSample.b;
-#endif
+  if (u_MetallicRoughnessUVSet >= 0)
+  {
+    // Roughness is stored in the 'g' channel, metallic is stored in the 'b' channel.
+    // This layout intentionally reserves the 'r' channel for (optional) occlusion map data
+    float4 mrSample = u_MetallicRoughnessSampler.Sample(MeshTextureSampler, getMetallicRoughnessUV(input));
+    info.perceptualRoughness *= mrSample.g;
+    info.metallic *= mrSample.b;
+  }
 
 #ifdef MATERIAL_METALLICROUGHNESS_SPECULAROVERRIDE
   // Overriding the f0 creates unrealistic materials if the IOR does not match up.
@@ -1347,9 +1350,8 @@ PS_OUTPUT main(PS_INPUT input)
 
   float4 baseColor = getBaseColor(input);
 
-#ifdef ALPHAMODE_OPAQUE
-  baseColor.a = 1.0;
-#endif
+  if (u_alphaMode == 0) //OPAQUE
+    baseColor.a = 1.0;
 
 #ifdef MATERIAL_UNLIT
   g_finalColor = (float4(linearTosRGB(baseColor.rgb), baseColor.a));
@@ -1542,9 +1544,9 @@ PS_OUTPUT main(PS_INPUT input)
 #endif // !USE_PUNCTUAL
 
   f_emissive = u_EmissiveFactor;
-#ifdef HAS_EMISSIVE_MAP
-  f_emissive *= sRGBToLinear(u_EmissiveSampler.Sample(MeshTextureSampler, getEmissiveUV(input))).rgb;
-#endif
+
+  if (u_EmissiveUVSet >= 0)
+    f_emissive *= sRGBToLinear(u_EmissiveSampler.Sample(MeshTextureSampler, getEmissiveUV(input))).rgb;
 
   float3 color = float3(0.0, 0.0, 0.0);
 
@@ -1574,41 +1576,33 @@ PS_OUTPUT main(PS_INPUT input)
 
   float ao = 1.0;
   // Apply optional PBR terms for additional (optional) shading
-#ifdef HAS_OCCLUSION_MAP
-  ao = u_OcclusionSampler.Sample(MeshTextureSampler, getOcclusionUV(input)).r;
-  color = lerp(color, color * ao, u_OcclusionStrength);
-#endif
+  if (u_OcclusionUVSet >= 0)
+  {
+    ao = u_OcclusionSampler.Sample(MeshTextureSampler, getOcclusionUV(input)).r;
+    color = lerp(color, color * ao, u_OcclusionStrength);
+  }
 
 #ifndef DEBUG_OUTPUT // no debug
 
-#ifdef ALPHAMODE_MASK
-  // Late discard to avaoid samplig artifacts. See https://github.com/KhronosGroup/glTF-Sample-Viewer/issues/267
-  if (baseColor.a < u_AlphaCutoff)
+  if (u_alphaMode == 1) //MASK
   {
-    discard;
+    // Late discard to avaoid samplig artifacts. See https://github.com/KhronosGroup/glTF-Sample-Viewer/issues/267
+    if (baseColor.a < u_AlphaCutoff)
+      discard;
+    baseColor.a = 1.0;
   }
-  baseColor.a = 1.0;
-#endif
 
   // regular shading
   g_finalColor = float4(toneMap(color), baseColor.a);
 
 #else // debug output
 
-#ifdef DEBUG_METALLIC
-  g_finalColor.rgb = float3(materialInfo.metallic);
-#endif
-
-#ifdef DEBUG_ROUGHNESS
-  g_finalColor.rgb = float3(materialInfo.perceptualRoughness);
+#ifdef DEBUG_METALLICROUGHNESS
+  g_finalColor.rgb = float3(materialInfo.metallic, materialInfo.perceptualRoughness, 0.0);
 #endif
 
 #ifdef DEBUG_NORMAL
-#ifdef HAS_NORMAL_MAP
-  g_finalColor.rgb = u_NormalSampler.Sample(MeshTextureSampler, getNormalUV(input)).rgb;
-#else
-  g_finalColor.rgb = n;
-#endif
+  g_finalColor.rgb = n * 0.5 + 0.5;
 #endif
 
 #ifdef DEBUG_TANGENT

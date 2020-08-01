@@ -19,7 +19,14 @@ enum vcGLTFTypes
   vcGLTFType_Int32 = 5124,
   vcGLTFType_Uint32 = 5125,
   vcGLTFType_F32 = 5126,
-  vcGLTFType_F64 = 5130
+  vcGLTFType_F64 = 5130,
+
+  vcGLTFType_Nearest = 9728,
+  vcGLTFType_Linear = 9729,
+
+  vcGLTFType_ClampEdge = 33071,
+  vcGLTFType_MirroredRepeat = 33648,
+  vcGLTFType_Repeat = 10497,
 };
 
 struct vcGLTFNode
@@ -31,6 +38,43 @@ struct vcGLTFMeshInstance
 {
   int meshID;
   udDouble4x4 matrix;
+};
+
+enum vcGLTF_AlphaMode
+{
+  vcGLTFAM_Opaque,
+  vcGLTFAM_Mask,
+  vcGLTFAM_Blend
+};
+
+struct vcGLTFMeshPrimitive
+{
+  vcMesh *pMesh;
+
+  udFloat4 baseColorFactor;
+  int baseColorTexture;
+
+  float metallicFactor;
+  float roughnessFactor;
+  int metallicRoughnessTexture;
+
+  double normalScale;
+  int normalTexture;
+
+  int emissiveTexture;
+  udFloat3 emissiveFactor;
+
+  int occlusionTexture;
+  
+  bool doubleSided;
+  vcGLTF_AlphaMode alpaMode;
+  float alphaCutoff;
+};
+
+struct vcGLTFMesh
+{
+  int numPrimitives;
+  vcGLTFMeshPrimitive *pPrimitives;
 };
 
 struct vcGLTFBuffer
@@ -50,23 +94,26 @@ struct vcGLTFScene
   vcGLTFBuffer *pBuffers;
 
   int meshCount;
-  vcMesh** ppMeshes;
+  vcGLTFMesh *pMeshes;
+
+  int textureCount;
+  vcTexture **ppTextures;
 };
 
+vcVertexLayoutTypes *s_pShaderTypes = nullptr;
+int s_shaderTotalAttributes = 0;
 vcShader* s_pBasicShader = nullptr;
 vcShaderConstantBuffer *s_pBasicShaderVertUniformBuffer = nullptr;
 vcShaderConstantBuffer *s_pBasicShaderFragUniformBuffer = nullptr;
+vcShaderSampler *s_pBasicShaderBaseColourSampler = nullptr;
+vcShaderSampler *s_pBasicShaderMetallicRoughnessSampler = nullptr;
+vcShaderSampler *s_pBasicShaderNormalMapSampler = nullptr;
+vcShaderSampler *s_pBasicShaderEmissiveMapSampler = nullptr;
+vcShaderSampler *s_pBasicShaderOcclusionMapSampler = nullptr;
 
 #ifndef LIGHT_COUNT
 # define LIGHT_COUNT 2
 #endif
-
-/*struct udFloat3x3
-{
-  udFloat3 x;
-  udFloat3 y;
-  udFloat3 z;
-};*/
 
 struct vcGLTFVertInputs
 {
@@ -84,7 +131,6 @@ struct vcGLTFVertInputs
 #endif
 } s_gltfVertInfo = {};
 
-#define HAS_NORMALS
 #define MATERIAL_METALLICROUGHNESS
 #define USE_PUNCTUAL
 
@@ -97,9 +143,10 @@ struct Light
   float intensity;
 
   udFloat3 position;
-  float innerConeCos;
 
+  float innerConeCos;
   float outerConeCos;
+
   int type;
 
   udFloat2 padding;
@@ -163,35 +210,31 @@ struct vcGLTFVertFragSettings
 #endif
 
   // General Material
-#ifdef HAS_NORMAL_MAP
   int u_NormalUVSet;
+  int u_EmissiveUVSet;
+  int u_OcclusionUVSet;
+  float u_OcclusionStrength;
+
+  // Alpha mode
+  int u_alphaMode; // 0 = OPAQUE, 1 = ALPHAMASK, 2 = BLEND
+  float u_AlphaCutoff;
+
+  udFloat2 __padding;
+
 # ifdef HAS_NORMAL_UV_TRANSFORM
   float3x3 u_NormalUVTransform;
 # endif
-#endif
 
-#ifdef HAS_EMISSIVE_MAP
-  int u_EmissiveUVSet;
 # ifdef HAS_EMISSIVE_UV_TRANSFORM
   float3x3 u_EmissiveUVTransform;
 # endif
-#endif
 
-#ifdef HAS_OCCLUSION_MAP
-  int u_OcclusionUVSet;
-  float u_OcclusionStrength;
 # ifdef HAS_OCCLUSION_UV_TRANSFORM
   float3x3 u_OcclusionUVTransform;
 # endif
-#endif
 
 #ifdef USE_PUNCTUAL
   Light u_Lights[LIGHT_COUNT];
-#endif
-
-  // Alpha mode
-#ifdef ALPHAMODE_MASK
-  float u_AlphaCutoff;
 #endif
 
 #ifdef USE_UBL
@@ -323,6 +366,30 @@ struct vcGLTFVertFragSettings
 #endif
 } s_gltfFragInfo = {};
 
+
+void vcGLTF_GenShader()
+{
+  if (s_pShaderTypes == nullptr || s_shaderTotalAttributes == 0)
+    return;
+
+  const char* defines[] = {
+    //"HAS_TANGENTS",
+    "HAS_UV_SET1",
+    "MATERIAL_METALLICROUGHNESS",
+    "USE_PUNCTUAL",
+    //"DEBUG_OUTPUT",
+    //"DEBUG_NORMAL",
+  };
+  vcShader_CreateFromFile(&s_pBasicShader, "asset://assets/shaders/gltfVertexShader", "asset://assets/shaders/gltfFragmentShader", s_pShaderTypes, s_shaderTotalAttributes, defines, udLengthOf(defines));
+  vcShader_GetConstantBuffer(&s_pBasicShaderVertUniformBuffer, s_pBasicShader, "u_EveryFrame", sizeof(s_gltfVertInfo));
+  vcShader_GetConstantBuffer(&s_pBasicShaderFragUniformBuffer, s_pBasicShader, "u_FragSettings", sizeof(s_gltfFragInfo));
+  vcShader_GetSamplerIndex(&s_pBasicShaderBaseColourSampler, s_pBasicShader, "u_BaseColorSampler");
+  vcShader_GetSamplerIndex(&s_pBasicShaderMetallicRoughnessSampler, s_pBasicShader, "u_MetallicRoughnessSampler");
+  vcShader_GetSamplerIndex(&s_pBasicShaderNormalMapSampler, s_pBasicShader, "u_NormalSampler");
+  vcShader_GetSamplerIndex(&s_pBasicShaderEmissiveMapSampler, s_pBasicShader, "u_EmissiveSampler");
+  vcShader_GetSamplerIndex(&s_pBasicShaderOcclusionMapSampler, s_pBasicShader, "u_OcclusionSampler");
+}
+
 udResult vcGLTF_LoadBuffer(vcGLTFScene *pScene, const udJSON &root, int bufferID)
 {
   udResult result = udR_Failure_;
@@ -346,13 +413,46 @@ epilogue:
   return result;
 }
 
+void vcGLTF_LoadTexture(vcGLTFScene *pScene, const udJSON &root, int textureID)
+{
+  if (textureID >= 0 && textureID < pScene->textureCount && pScene->ppTextures[textureID] == nullptr)
+  {
+    const char *pURI = root.Get("images[%d].uri", root.Get("textures[%d].source", textureID).AsInt()).AsString();
+    int sampler = root.Get("textures[%d].sampler", textureID).AsInt();
+
+    vcTextureFilterMode filterMode;
+    int filter = root.Get("samplers[%d].magFilter", sampler).AsInt();
+    if (filter == vcGLTFType_Linear)
+      filterMode = vcTFM_Linear;
+    else
+      filterMode = vcTFM_Nearest;
+
+    vcTextureWrapMode wrapMode;
+    int wrapS = root.Get("samplers[%d].wrapS", sampler).AsInt(vcGLTFType_Nearest);
+    int wrapT = root.Get("samplers[%d].wrapT", sampler).AsInt(vcGLTFType_Nearest);
+
+    if (wrapS != wrapT)
+      __debugbreak();
+
+    if (wrapS == vcGLTFType_ClampEdge)
+      wrapMode = vcTWM_Clamp;
+    else if (wrapS == vcGLTFType_MirroredRepeat)
+      wrapMode = vcTWM_MirroredRepeat;
+    else
+      wrapMode = vcTWM_Repeat;
+
+    if (pURI != nullptr)
+      vcTexture_CreateFromFilename(&pScene->ppTextures[textureID], udTempStr("%s/%s", pScene->pPath, pURI), nullptr, nullptr, filterMode, false, wrapMode);
+  }
+}
+
 udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
 {
-  pScene->ppMeshes;
-
   const udJSON &mesh = root.Get("meshes[%d]", meshID);
   
   int numPrimitives = (int)mesh.Get("primitives").ArrayLength();
+  pScene->pMeshes[meshID].numPrimitives = numPrimitives;
+  pScene->pMeshes[meshID].pPrimitives = udAllocType(vcGLTFMeshPrimitive, numPrimitives, udAF_Zero);
 
   printf("Mesh Primitives: %d", numPrimitives);
 
@@ -367,6 +467,49 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
 
     if (mode != 4)
       __debugbreak();
+
+    if (material >= 0 && material < root.Get("materials").ArrayLength())
+    {
+      pScene->pMeshes[meshID].pPrimitives[i].baseColorFactor = root.Get("materials[%d].pbrMetallicRoughness.baseColorFactor", material).AsFloat4(udFloat4::one());
+      pScene->pMeshes[meshID].pPrimitives[i].baseColorTexture = root.Get("materials[%d].pbrMetallicRoughness.baseColorTexture.index", material).AsInt(-1);
+      if (pScene->pMeshes[meshID].pPrimitives[i].baseColorTexture != -1)
+        vcGLTF_LoadTexture(pScene, root, pScene->pMeshes[meshID].pPrimitives[i].baseColorTexture);
+
+      pScene->pMeshes[meshID].pPrimitives[i].metallicFactor = root.Get("materials[%d].pbrMetallicRoughness.metallicFactor", material).AsFloat(1.f);
+      pScene->pMeshes[meshID].pPrimitives[i].roughnessFactor = root.Get("materials[%d].pbrMetallicRoughness.roughnessFactor", material).AsFloat(1.f);
+      pScene->pMeshes[meshID].pPrimitives[i].metallicRoughnessTexture = root.Get("materials[%d].pbrMetallicRoughness.metallicRoughnessTexture.index", material).AsInt(-1);
+      if (pScene->pMeshes[meshID].pPrimitives[i].metallicRoughnessTexture != -1)
+        vcGLTF_LoadTexture(pScene, root, pScene->pMeshes[meshID].pPrimitives[i].metallicRoughnessTexture);
+
+      pScene->pMeshes[meshID].pPrimitives[i].normalScale = root.Get("materials[%d].normalTexture.scale", material).AsDouble(1.0);
+      pScene->pMeshes[meshID].pPrimitives[i].normalTexture = root.Get("materials[%d].normalTexture.index", material).AsInt(-1);
+      if (pScene->pMeshes[meshID].pPrimitives[i].normalTexture != -1)
+        vcGLTF_LoadTexture(pScene, root, pScene->pMeshes[meshID].pPrimitives[i].normalTexture);
+      
+      pScene->pMeshes[meshID].pPrimitives[i].emissiveFactor = root.Get("materials[%d].emissiveFactor", material).AsFloat3();
+      pScene->pMeshes[meshID].pPrimitives[i].emissiveTexture = root.Get("materials[%d].emissiveTexture.index", material).AsInt(-1);
+      if (pScene->pMeshes[meshID].pPrimitives[i].emissiveTexture != -1)
+        vcGLTF_LoadTexture(pScene, root, pScene->pMeshes[meshID].pPrimitives[i].emissiveTexture);
+
+      pScene->pMeshes[meshID].pPrimitives[i].occlusionTexture = root.Get("materials[%d].occlusionTexture.index", material).AsInt(-1);
+      if (pScene->pMeshes[meshID].pPrimitives[i].occlusionTexture != -1)
+        vcGLTF_LoadTexture(pScene, root, pScene->pMeshes[meshID].pPrimitives[i].occlusionTexture);
+
+      const char *pAlphaModeStr = root.Get("materials[%d].alphaMode", material).AsString(nullptr);
+      pScene->pMeshes[meshID].pPrimitives[i].alpaMode = vcGLTFAM_Opaque;
+      pScene->pMeshes[meshID].pPrimitives[i].alphaCutoff = -1.f;
+      if (udStrEquali(pAlphaModeStr, "MASK"))
+      {
+        pScene->pMeshes[meshID].pPrimitives[i].alpaMode = vcGLTFAM_Mask;
+        pScene->pMeshes[meshID].pPrimitives[i].alphaCutoff = root.Get("materials[%d].alphaCutoff").AsFloat(0.5f);
+      }
+      else if (udStrEquali(pAlphaModeStr, "BLEND"))
+      {
+        pScene->pMeshes[meshID].pPrimitives[i].alpaMode = vcGLTFAM_Blend;
+      }
+
+      pScene->pMeshes[meshID].pPrimitives[i].doubleSided = root.Get("materials[%d].alphaMode", material).AsBool(false);
+    }
 
     int indexAccessor = primitive.Get("indices").AsInt(-1);
     void *pIndexBuffer = nullptr;
@@ -402,9 +545,10 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
 
     const udJSON &attributes = primitive.Get("attributes");
     int totalAttributes = (int)attributes.MemberCount();
-    vcVertexLayoutTypes *pTypes = udAllocType(vcVertexLayoutTypes, totalAttributes, udAF_None);
+    vcVertexLayoutTypes *pTypes = udAllocType(vcVertexLayoutTypes, totalAttributes+1, udAF_None); //+1 in case we need to add normals
 
     int maxCount = -1;
+    bool hasNormals = false;
 
     for (size_t j = 0; j < totalAttributes; ++j)
     {
@@ -445,8 +589,24 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
       }
       else if (udStrEqual(pAttributeName, "NORMAL"))
       {
+        hasNormals = true;
+
         if (udStrEqual(pAccessorType, "VEC3"))
           pTypes[j] = vcVLT_Normal3;
+        else
+          __debugbreak();
+      }
+      else if (udStrEqual(pAttributeName, "TANGENT"))
+      {
+        if (udStrEqual(pAccessorType, "VEC4"))
+          pTypes[j] = vcVLT_Tangent4;
+        else
+          __debugbreak();
+      }
+      else if (udStrEqual(pAttributeName, "TEXCOORD_0"))
+      {
+        if (udStrEqual(pAccessorType, "VEC2"))
+          pTypes[j] = vcVLT_TextureCoords2;
         else
           __debugbreak();
       }
@@ -456,38 +616,134 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
       }
     }
 
-    uint32_t vertLen = vcLayout_GetSize(pTypes, totalAttributes);
-    uint8_t *pVertData = udAllocType(uint8_t, vertLen * maxCount, udAF_Zero);
+    if (!hasNormals)
+    {
+      pTypes[totalAttributes] = vcVLT_Normal3;
+      ++totalAttributes;
+    }
 
-    float *pVertFloats = (float*)pVertData;
+    uint32_t vertexStride = vcLayout_GetSize(pTypes, totalAttributes);
+    uint8_t *pVertData = udAllocType(uint8_t, vertexStride * maxCount, udAF_Zero);
 
     // Decode the buffers
-    for (int vi = 0; vi < maxCount; ++vi)
+    int totalOffset = 0;
+
+    for (int ai = 0; ai < totalAttributes; ++ai)
     {
-      for (int ai = 0; ai < totalAttributes; ++ai)
+      if (pTypes[ai] == vcVLT_Normal3 && !hasNormals)
+      {
+        int count = 3;
+        int offset = totalOffset;
+        totalOffset += count * sizeof(float);
+
+        int posAI = -1;
+        for (int pai = 0; pai < totalAttributes; ++pai)
+        {
+          if (pTypes[pai] == vcVLT_Position3)
+          {
+            posAI = pai;
+            break;
+          }
+        }
+
+        if (posAI == -1)
+          __debugbreak(); // No position found?
+
+        int attributeAccessorIndex = attributes.GetMember(posAI)->AsInt(0);
+        const udJSON& accessor = root.Get("accessors[%d]", attributeAccessorIndex);
+
+        int bufferViewID = accessor.Get("bufferView").AsInt(-1);
+        int bufferID = root.Get("bufferViews[%d].buffer", bufferViewID).AsInt();
+        if (bufferID <= -1)
+          __debugbreak();
+
+        ptrdiff_t byteOffset = accessor.Get("byteOffset").AsInt64() + root.Get("bufferViews[%d].byteOffset", accessor.Get("bufferView").AsInt(-1)).AsInt64();
+        ptrdiff_t byteStride = accessor.Get("byteStride").AsInt64() + root.Get("bufferViews[%d].byteStride", accessor.Get("bufferView").AsInt(-1)).AsInt64();
+
+        for (int vi = 0; vi < maxCount; ++vi)
+        {
+          float *pVertFloats = (float*)(pVertData + vertexStride * vi + offset);
+
+          udFloat3 normal = {};
+
+          if (pIndexBuffer == nullptr)
+          {
+            int triangleStart = (vi / 3);
+            float *pPF = nullptr;
+            
+            pPF = (float*)(pScene->pBuffers[bufferID].pBytes + byteOffset + (triangleStart+0) * byteStride);
+            udFloat3 p0 = { pPF[0], pPF[1], pPF[2] };
+
+            pPF = (float*)(pScene->pBuffers[bufferID].pBytes + byteOffset + (triangleStart+1) * byteStride);
+            udFloat3 p1 = { pPF[0], pPF[1], pPF[2] };
+            
+            pPF = (float*)(pScene->pBuffers[bufferID].pBytes + byteOffset + (triangleStart+2) * byteStride);
+            udFloat3 p2 = { pPF[0], pPF[1], pPF[2] };
+
+            normal = udCross(p1-p0, p2-p0);
+          }
+          else
+          {
+            __debugbreak(); // Need to find the triangles this vert is used in and average them
+          }
+
+          for (int element = 0; element < count; ++element)
+          {
+            pVertFloats[element] = normal[element];
+          }
+        }
+      }
+      else
       {
         int attributeAccessorIndex = attributes.GetMember(ai)->AsInt(0);
         const udJSON& accessor = root.Get("accessors[%d]", attributeAccessorIndex);
 
-        const char* pAccessorType = accessor.Get("type").AsString();
-        ptrdiff_t offset = accessor.Get("byteOffset").AsInt64();
-
-        int bufferID = root.Get("bufferViews[%d].buffer", accessor.Get("bufferView").AsInt(-1)).AsInt();
+        int bufferViewID = accessor.Get("bufferView").AsInt(-1);
+        int bufferID = root.Get("bufferViews[%d].buffer", bufferViewID).AsInt();
         if (bufferID <= -1)
           __debugbreak();
 
-        if (bufferID < pScene->bufferCount && pScene->pBuffers[bufferID].pBytes != nullptr)
+        const char* pAccessorType = accessor.Get("type").AsString();
+        ptrdiff_t byteOffset = accessor.Get("byteOffset").AsInt64() + root.Get("bufferViews[%d].byteOffset", accessor.Get("bufferView").AsInt(-1)).AsInt64();
+        ptrdiff_t byteStride = accessor.Get("byteStride").AsInt64() + root.Get("bufferViews[%d].byteStride", accessor.Get("bufferView").AsInt(-1)).AsInt64();
+
+        int count = 3;
+        int offset = totalOffset;
+
+        if (udStrEqual(pAccessorType, "VEC3"))
         {
-          if (udStrEqual(pAccessorType, "VEC3"))
+          count = 3;
+          totalOffset += (count * sizeof(float));
+        }
+        else if (udStrEqual(pAccessorType, "VEC2"))
+        {
+          count = 2;
+          totalOffset += (count * sizeof(float));
+        }
+        else if (udStrEqual(pAccessorType, "VEC4"))
+        {
+          count = 4;
+          totalOffset += (count * sizeof(float));
+        }
+        else
+        {
+          __debugbreak();
+        }
+
+        if (bufferID >= pScene->bufferCount || pScene->pBuffers[bufferID].pBytes == nullptr)
+          continue;
+
+        if (byteStride == 0)
+          byteStride = count * sizeof(float);
+
+        for (int vi = 0; vi < maxCount; ++vi)
+        {
+          float *pFloats = (float*)(pScene->pBuffers[bufferID].pBytes + byteOffset + vi * byteStride);
+          float *pVertFloats = (float*)(pVertData + vertexStride * vi + offset);
+
+          for (int element = 0; element < count; ++element)
           {
-            float *pFloats = (float*)(pScene->pBuffers[bufferID].pBytes + offset);
-            pVertFloats[vi * totalAttributes * 3 + ai * 3 + 0] = pFloats[vi * 3 + 0];
-            pVertFloats[vi * totalAttributes * 3 + ai * 3 + 1] = pFloats[vi * 3 + 1];
-            pVertFloats[vi * totalAttributes * 3 + ai * 3 + 2] = pFloats[vi * 3 + 2];
-          }
-          else
-          {
-            __debugbreak();
+            pVertFloats[element] = pFloats[element];
           }
         }
       }
@@ -495,16 +751,15 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
 
     if (s_pBasicShader == nullptr)
     {
-      const char* defines[] = { "HAS_NORMALS", "MATERIAL_METALLICROUGHNESS", "USE_PUNCTUAL" };
-      vcShader_CreateFromFile(&s_pBasicShader, "asset://assets/shaders/gltfVertexShader", "asset://assets/shaders/gltfFragmentShader", pTypes, totalAttributes, defines, udLengthOf(defines));
-      vcShader_GetConstantBuffer(&s_pBasicShaderVertUniformBuffer, s_pBasicShader, "u_EveryFrame", sizeof(s_gltfVertInfo));
-      vcShader_GetConstantBuffer(&s_pBasicShaderFragUniformBuffer, s_pBasicShader, "u_FragSettings", sizeof(s_gltfFragInfo));
+      s_pShaderTypes = (vcVertexLayoutTypes*)udMemDup(pTypes, sizeof(vcVertexLayoutTypes)*totalAttributes, 0, udAF_None);
+      s_shaderTotalAttributes = totalAttributes;
+      vcGLTF_GenShader();
     }
     
     if (pIndexBuffer == nullptr)
-      vcMesh_Create(&pScene->ppMeshes[meshID], pTypes, totalAttributes, pVertData, maxCount, nullptr, 0, vcMF_NoIndexBuffer | meshFlags);
+      vcMesh_Create(&pScene->pMeshes[meshID].pPrimitives[i].pMesh, pTypes, totalAttributes, pVertData, maxCount, nullptr, 0, vcMF_NoIndexBuffer | meshFlags);
     else
-      vcMesh_Create(&pScene->ppMeshes[meshID], pTypes, totalAttributes, pVertData, maxCount, pIndexBuffer, indexCount, meshFlags);
+      vcMesh_Create(&pScene->pMeshes[meshID].pPrimitives[i].pMesh, pTypes, totalAttributes, pVertData, maxCount, pIndexBuffer, indexCount, meshFlags);
   
     udFree(pTypes);
   }
@@ -528,13 +783,17 @@ udResult vcGLTF_ProcessChildNode(vcGLTFScene *pScene, const udJSON &root, const 
     if (pMesh->meshID >= pScene->meshCount)
       pMesh->meshID = 0;
 
-    if (pScene->ppMeshes[pMesh->meshID] == nullptr)
+    if (pScene->pMeshes[pMesh->meshID].pPrimitives == nullptr)
       vcGLTF_CreateMesh(pScene, root, pMesh->meshID);
   }
   else if (!child.Get("children").IsVoid())
   {
     for (int i = 0; i < child.Get("children").ArrayLength(); ++i)
       vcGLTF_ProcessChildNode(pScene, root, root.Get("nodes[%d]", child.Get("children[%zu]", i).AsInt()), chainedMatrix);
+  }
+  else if (!child.Get("camera").IsVoid())
+  {
+    // We don't care about cameras
   }
   else
   {
@@ -575,7 +834,10 @@ udResult vcGLTF_LoadPolygonModel(vcGLTFScene **ppScene, const char *pFilename, u
   pScene->pBuffers = udAllocType(vcGLTFBuffer, pScene->bufferCount, udAF_Zero);
   
   pScene->meshCount = (int)gltfData.Get("meshes").ArrayLength();
-  pScene->ppMeshes = udAllocType(vcMesh *, pScene->meshCount, udAF_Zero);
+  pScene->pMeshes = udAllocType(vcGLTFMesh, pScene->meshCount, udAF_Zero);
+
+  pScene->textureCount = (int)gltfData.Get("textures").ArrayLength();
+  pScene->ppTextures = udAllocType(vcTexture*, pScene->textureCount, udAF_Zero);
 
   baseScene = gltfData.Get("scene").AsInt();
   pSceneNodes = gltfData.Get("scenes[%d].nodes").AsArray();
@@ -608,52 +870,124 @@ void vcGLTF_Destroy(vcGLTFScene **ppScene)
   udFree(pScene->pBuffers);
   pScene->meshInstances.Deinit();
   pScene->nodes.Deinit();
-  udFree(pScene->ppMeshes);
+  udFree(pScene->pMeshes);
+  udFree(pScene->ppTextures);
 
   udFree(pScene);
 }
 
-udResult vcGLTF_Render(vcGLTFScene *pScene, udDouble3 cameraPosition, udDouble4x4 worldMatrix, udDouble4x4 viewMatrix, udDouble4x4 projectionMatrix)
+bool g_allowBaseColourMaps = true;
+bool g_allowNormalMaps = true;
+bool g_allowMetalRoughMaps = true;
+bool g_allowEmissiveMaps = true;
+bool g_allowOcclusionMaps = true;
+
+udResult vcGLTF_Render(vcGLTFScene *pScene, udRay<double> camera, udDouble4x4 worldMatrix, udDouble4x4 viewMatrix, udDouble4x4 projectionMatrix)
 {
   vcShader_Bind(s_pBasicShader);
 
+  static udDouble4x4 SpaceChange = { 1, 0, 0, 0,   0, 0, 1, 0,   0, -1, 0, 0,   0, 0, 0, 1 };
+
   for (size_t i = 0; i < pScene->meshInstances.length; ++i)
   {
-    s_gltfVertInfo.u_ModelMatrix = udFloat4x4::create(worldMatrix * pScene->meshInstances[i].matrix);
+    s_gltfVertInfo.u_ModelMatrix = udFloat4x4::create(worldMatrix * SpaceChange * pScene->meshInstances[i].matrix);
     s_gltfVertInfo.u_ViewProjectionMatrix = udFloat4x4::create(projectionMatrix * viewMatrix);
-    s_gltfVertInfo.u_NormalMatrix = udFloat4x4::create(udTranspose(udInverse(worldMatrix * pScene->meshInstances[i].matrix)));
+    s_gltfVertInfo.u_NormalMatrix = udFloat4x4::create(udTranspose(udInverse(worldMatrix * SpaceChange * pScene->meshInstances[i].matrix)));
     vcShader_BindConstantBuffer(s_pBasicShader, s_pBasicShaderVertUniformBuffer, &s_gltfVertInfo, sizeof(s_gltfVertInfo));
 
-    s_gltfFragInfo.u_Camera = udFloat3::create(cameraPosition);
-    s_gltfFragInfo.u_Exposure = 1.f;
-    s_gltfFragInfo.u_EmissiveFactor = udFloat3::create(0.0f, 0.0f, 0.0f);
-    s_gltfFragInfo.u_NormalScale = 1.f;
+    s_gltfFragInfo.u_Camera = udFloat3::create(camera.position);
 
     // Lights
     // Directional Lights
-    s_gltfFragInfo.u_Lights[0].direction = { 0.f, -0.5f, -0.5f };
+    s_gltfFragInfo.u_Lights[0].direction = udNormalize(udFloat3::create(0.f, -0.1f, -0.9f));
     s_gltfFragInfo.u_Lights[0].color = { 0.9f, 0.8f, 1.f };
-    s_gltfFragInfo.u_Lights[0].intensity = 100.f;
+    s_gltfFragInfo.u_Lights[0].intensity = 1.f;
     s_gltfFragInfo.u_Lights[0].type = 0;
 
-    // Spotlight
-    s_gltfFragInfo.u_Lights[1].direction = { 1.f, 0.f, 0.f };
-    s_gltfFragInfo.u_Lights[1].range = 50.f;
-    s_gltfFragInfo.u_Lights[1].color = { 1.f, 1.f, 1.f };
+    // Pointlight
+    s_gltfFragInfo.u_Lights[1].direction = udFloat3::create(camera.direction);
+    s_gltfFragInfo.u_Lights[1].position = udFloat3::create(camera.position);
+    s_gltfFragInfo.u_Lights[1].color = { 0.1f, 0.1f, 1.f };
     s_gltfFragInfo.u_Lights[1].intensity = 100.f;
-    s_gltfFragInfo.u_Lights[1].position = { -10.f, 0.f, 0.f };
-    s_gltfFragInfo.u_Lights[1].innerConeCos = 0.003f;
-    s_gltfFragInfo.u_Lights[1].outerConeCos = 0.707f;
+    s_gltfFragInfo.u_Lights[1].range = 100000.f;
     s_gltfFragInfo.u_Lights[1].type = 2;
+    s_gltfFragInfo.u_Lights[1].innerConeCos = udCos(UD_PIf / 8.f);
+    s_gltfFragInfo.u_Lights[1].outerConeCos = udCos(UD_PIf / 4.f);
 
-    //Metallic/Roughness
-    s_gltfFragInfo.u_BaseColorFactor = { 0.8f, 0.f, 0.f, 1.f };
-    s_gltfFragInfo.u_MetallicFactor = 0.25f;
-    s_gltfFragInfo.u_RoughnessFactor = 0.25f;
+    for (int j = 0; j < pScene->pMeshes[pScene->meshInstances[i].meshID].numPrimitives; ++j)
+    {
+      //Material
+      s_gltfFragInfo.u_EmissiveFactor = pScene->pMeshes[pScene->meshInstances[i].meshID].pPrimitives[j].emissiveFactor;
+      s_gltfFragInfo.u_BaseColorFactor = pScene->pMeshes[pScene->meshInstances[i].meshID].pPrimitives[j].baseColorFactor;
+      s_gltfFragInfo.u_MetallicFactor = pScene->pMeshes[pScene->meshInstances[i].meshID].pPrimitives[j].metallicFactor;
+      s_gltfFragInfo.u_RoughnessFactor = pScene->pMeshes[pScene->meshInstances[i].meshID].pPrimitives[j].roughnessFactor;
 
-    vcShader_BindConstantBuffer(s_pBasicShader, s_pBasicShaderFragUniformBuffer, &s_gltfFragInfo, sizeof(s_gltfFragInfo));
+      s_gltfFragInfo.u_Exposure = 1.f;
+      s_gltfFragInfo.u_NormalScale = (float)pScene->pMeshes[pScene->meshInstances[i].meshID].pPrimitives[j].normalScale;
 
-    vcMesh_Render(pScene->ppMeshes[pScene->meshInstances[i].meshID]);
+      s_gltfFragInfo.u_alphaMode = pScene->pMeshes[pScene->meshInstances[i].meshID].pPrimitives[j].alpaMode;
+      s_gltfFragInfo.u_AlphaCutoff = pScene->pMeshes[pScene->meshInstances[i].meshID].pPrimitives[j].alphaCutoff;
+
+      if (g_allowNormalMaps && pScene->pMeshes[pScene->meshInstances[i].meshID].pPrimitives[j].normalTexture >= 0)
+      {
+        s_gltfFragInfo.u_NormalUVSet = 0;
+        vcShader_BindTexture(s_pBasicShader, pScene->ppTextures[pScene->pMeshes[pScene->meshInstances[i].meshID].pPrimitives[j].normalTexture], 0, s_pBasicShaderNormalMapSampler);
+      }
+      else
+      {
+        s_gltfFragInfo.u_NormalUVSet = -1;
+      }
+
+      if (g_allowEmissiveMaps && pScene->pMeshes[pScene->meshInstances[i].meshID].pPrimitives[j].emissiveTexture >= 0)
+      {
+        s_gltfFragInfo.u_EmissiveUVSet = 0;
+        vcShader_BindTexture(s_pBasicShader, pScene->ppTextures[pScene->pMeshes[pScene->meshInstances[i].meshID].pPrimitives[j].emissiveTexture], 0, s_pBasicShaderEmissiveMapSampler);
+      }
+      else
+      {
+        s_gltfFragInfo.u_EmissiveUVSet = -1;
+      }
+
+      if (g_allowOcclusionMaps && pScene->pMeshes[pScene->meshInstances[i].meshID].pPrimitives[j].occlusionTexture >= 0)
+      {
+        s_gltfFragInfo.u_OcclusionUVSet = 0;
+        s_gltfFragInfo.u_OcclusionStrength = 1.f;
+        vcShader_BindTexture(s_pBasicShader, pScene->ppTextures[pScene->pMeshes[pScene->meshInstances[i].meshID].pPrimitives[j].occlusionTexture], 0, s_pBasicShaderOcclusionMapSampler);
+      }
+      else
+      {
+        s_gltfFragInfo.u_OcclusionUVSet = -1;
+      }
+
+      if (g_allowBaseColourMaps && pScene->pMeshes[pScene->meshInstances[i].meshID].pPrimitives[j].baseColorTexture >= 0)
+      {
+        s_gltfFragInfo.u_BaseColorUVSet = 0;
+        vcShader_BindTexture(s_pBasicShader, pScene->ppTextures[pScene->pMeshes[pScene->meshInstances[i].meshID].pPrimitives[j].baseColorTexture], 0, s_pBasicShaderBaseColourSampler);
+      }
+      else
+      {
+        s_gltfFragInfo.u_BaseColorUVSet = -1;
+      }
+
+      if (g_allowMetalRoughMaps && pScene->pMeshes[pScene->meshInstances[i].meshID].pPrimitives[j].metallicRoughnessTexture >= 0)
+      {
+        s_gltfFragInfo.u_MetallicRoughnessUVSet = 0;
+        vcShader_BindTexture(s_pBasicShader, pScene->ppTextures[pScene->pMeshes[pScene->meshInstances[i].meshID].pPrimitives[j].metallicRoughnessTexture], 0, s_pBasicShaderMetallicRoughnessSampler);
+      }
+      else
+      {
+        s_gltfFragInfo.u_MetallicRoughnessUVSet = -1;
+      }
+
+      vcShader_BindConstantBuffer(s_pBasicShader, s_pBasicShaderFragUniformBuffer, &s_gltfFragInfo, sizeof(s_gltfFragInfo));
+
+      if (pScene->pMeshes[pScene->meshInstances[i].meshID].pPrimitives[j].doubleSided)
+        vcGLState_SetFaceMode(vcGLSFM_Solid, vcGLSCM_None, true, false);
+      else
+        vcGLState_SetFaceMode(vcGLSFM_Solid, vcGLSCM_Back, true, false);
+
+      vcMesh_Render(pScene->pMeshes[pScene->meshInstances[i].meshID].pPrimitives[j].pMesh);
+    }
   }
 
   return udR_Success;
