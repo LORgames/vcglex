@@ -405,6 +405,7 @@ udResult vcGLTF_LoadBuffer(vcGLTFScene *pScene, const udJSON &root, int bufferID
   UD_ERROR_IF(root.Get("buffers[%d].byteLength", bufferID).AsInt() != loadedSize, udR_CorruptData);
 
   pScene->pBuffers[bufferID].byteLength = loadedSize;
+  result = udR_Success;
 
 epilogue:
   if (result != udR_Success)
@@ -441,7 +442,9 @@ void vcGLTF_LoadTexture(vcGLTFScene *pScene, const udJSON &root, int textureID)
     else
       wrapMode = vcTWM_Repeat;
 
-    if (pURI != nullptr)
+    if (udStrBeginsWith(pURI, "data:"))
+      vcTexture_CreateFromFilename(&pScene->ppTextures[textureID], pURI, nullptr, nullptr, filterMode, false, wrapMode);
+    else if (pURI != nullptr)
       vcTexture_CreateFromFilename(&pScene->ppTextures[textureID], udTempStr("%s/%s", pScene->pPath, pURI), nullptr, nullptr, filterMode, false, wrapMode);
   }
 }
