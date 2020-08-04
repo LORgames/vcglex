@@ -29,6 +29,26 @@ enum vcGLTFTypes
   vcGLTFType_Repeat = 10497,
 };
 
+enum vcGLTFFeatures
+{
+  vcRSF_HasTangents,
+  vcRSF_HasUVSet0,
+  vcRSF_HasUVSet1,
+
+  vcRSF_Count
+};
+
+enum vcGLTFFeatureBits
+{
+  vcRSB_None = 0,
+
+  vcRSB_Tangents = 1 << vcRSF_HasTangents,
+  vcRSB_UVSet0 = 1 << vcRSF_HasUVSet0,
+  vcRSB_UVSet1 = 1 << vcRSF_HasUVSet1,
+
+  vcRSB_Count = 1 << vcRSF_Count
+};
+
 struct vcGLTFNode
 {
   udDouble4x4 matrix;
@@ -49,6 +69,7 @@ enum vcGLTF_AlphaMode
 
 struct vcGLTFMeshPrimitive
 {
+  vcGLTFFeatureBits features;
   vcMesh *pMesh;
 
   udFloat4 baseColorFactor;
@@ -100,16 +121,18 @@ struct vcGLTFScene
   vcTexture **ppTextures;
 };
 
-vcVertexLayoutTypes *s_pShaderTypes = nullptr;
-int s_shaderTotalAttributes = 0;
-vcShader* s_pBasicShader = nullptr;
-vcShaderConstantBuffer *s_pBasicShaderVertUniformBuffer = nullptr;
-vcShaderConstantBuffer *s_pBasicShaderFragUniformBuffer = nullptr;
-vcShaderSampler *s_pBasicShaderBaseColourSampler = nullptr;
-vcShaderSampler *s_pBasicShaderMetallicRoughnessSampler = nullptr;
-vcShaderSampler *s_pBasicShaderNormalMapSampler = nullptr;
-vcShaderSampler *s_pBasicShaderEmissiveMapSampler = nullptr;
-vcShaderSampler *s_pBasicShaderOcclusionMapSampler = nullptr;
+struct vcGLTFShader
+{
+  vcShader* pShader;
+  vcShaderConstantBuffer *pVertUniformBuffer;
+  vcShaderConstantBuffer *pFragUniformBuffer;
+
+  vcShaderSampler *pBaseColourSampler;
+  vcShaderSampler *pMetallicRoughnessSampler;
+  vcShaderSampler *pNormalMapSampler;
+  vcShaderSampler *pEmissiveMapSampler;
+  vcShaderSampler *pOcclusionMapSampler;
+} g_shaderTypes[vcRSB_Count] = {};
 
 #ifndef LIGHT_COUNT
 # define LIGHT_COUNT 2
@@ -367,27 +390,78 @@ struct vcGLTFVertFragSettings
 } s_gltfFragInfo = {};
 
 
-void vcGLTF_GenShader()
+void vcGLTF_GenerateGlobalShaders()
 {
-  if (s_pShaderTypes == nullptr || s_shaderTotalAttributes == 0)
-    return;
+  vcGLTF_DestroyGlobalShaders();
 
-  const char* defines[] = {
-    //"HAS_TANGENTS",
-    "HAS_UV_SET1",
-    "MATERIAL_METALLICROUGHNESS",
-    "USE_PUNCTUAL",
-    //"DEBUG_OUTPUT",
-    //"DEBUG_NORMAL",
+  struct TypeStuff
+  {
+    const char *pDefine;
+    vcVertexLayoutTypes layoutType;
   };
-  vcShader_CreateFromFile(&s_pBasicShader, "asset://assets/shaders/gltfVertexShader", "asset://assets/shaders/gltfFragmentShader", s_pShaderTypes, s_shaderTotalAttributes, defines, udLengthOf(defines));
-  vcShader_GetConstantBuffer(&s_pBasicShaderVertUniformBuffer, s_pBasicShader, "u_EveryFrame", sizeof(s_gltfVertInfo));
-  vcShader_GetConstantBuffer(&s_pBasicShaderFragUniformBuffer, s_pBasicShader, "u_FragSettings", sizeof(s_gltfFragInfo));
-  vcShader_GetSamplerIndex(&s_pBasicShaderBaseColourSampler, s_pBasicShader, "u_BaseColorSampler");
-  vcShader_GetSamplerIndex(&s_pBasicShaderMetallicRoughnessSampler, s_pBasicShader, "u_MetallicRoughnessSampler");
-  vcShader_GetSamplerIndex(&s_pBasicShaderNormalMapSampler, s_pBasicShader, "u_NormalSampler");
-  vcShader_GetSamplerIndex(&s_pBasicShaderEmissiveMapSampler, s_pBasicShader, "u_EmissiveSampler");
-  vcShader_GetSamplerIndex(&s_pBasicShaderOcclusionMapSampler, s_pBasicShader, "u_OcclusionSampler");
+
+  TypeStuff types[vcRSF_Count] = {};
+
+  types[vcRSF_HasTangents].pDefine = "HAS_TANGENTS";
+  types[vcRSF_HasTangents].layoutType = vcVLT_Tangent4;
+
+  types[vcRSF_HasUVSet0].pDefine = "HAS_UV_SET1";
+  types[vcRSF_HasUVSet0].layoutType = vcVLT_TextureCoords2_0;
+
+  types[vcRSF_HasUVSet1].pDefine = "HAS_UV_SET2";
+  types[vcRSF_HasUVSet1].layoutType = vcVLT_TextureCoords2_1;
+
+  const int RequiredDefines = 2;
+  const char* defines[RequiredDefines + vcRSF_Count] = {};
+  defines[0] = "MATERIAL_METALLICROUGHNESS";
+  defines[1] = "USE_PUNCTUAL";
+
+  const int RequiredVertTypes = 2;
+  vcVertexLayoutTypes vltList[RequiredVertTypes + vcRSF_Count] = {};
+  vltList[0] = vcVLT_Position3;
+  vltList[1] = vcVLT_Normal3;
+
+  for (int i = 0; i < vcRSB_Count; ++i)
+  {
+    if ((i & (vcRSB_UVSet0 | vcRSB_UVSet1)) == vcRSB_UVSet1)
+      continue;
+
+    int extraCount = 0;
+    for (int j = 0; j < vcRSF_Count; ++j)
+    {
+      if (i & (1 << j))
+      {
+        defines[RequiredDefines + extraCount] = types[j].pDefine;
+        vltList[RequiredVertTypes + extraCount] = types[j].layoutType;
+
+        ++extraCount;
+      }
+    }
+
+    vcLayout_Sort(&vltList[RequiredVertTypes], extraCount);
+
+    vcShader_CreateFromFile(&g_shaderTypes[i].pShader, "asset://assets/shaders/gltfVertexShader", "asset://assets/shaders/gltfFragmentShader", vltList, RequiredVertTypes+extraCount, defines, RequiredDefines + extraCount);
+
+    vcShader_GetConstantBuffer(&g_shaderTypes[i].pVertUniformBuffer, g_shaderTypes[i].pShader, "u_EveryFrame", sizeof(s_gltfVertInfo));
+    vcShader_GetConstantBuffer(&g_shaderTypes[i].pFragUniformBuffer, g_shaderTypes[i].pShader, "u_FragSettings", sizeof(s_gltfFragInfo));
+
+    vcShader_GetSamplerIndex(&g_shaderTypes[i].pBaseColourSampler, g_shaderTypes[i].pShader, "u_BaseColorSampler");
+    vcShader_GetSamplerIndex(&g_shaderTypes[i].pMetallicRoughnessSampler, g_shaderTypes[i].pShader, "u_MetallicRoughnessSampler");
+    vcShader_GetSamplerIndex(&g_shaderTypes[i].pNormalMapSampler, g_shaderTypes[i].pShader, "u_NormalSampler");
+    vcShader_GetSamplerIndex(&g_shaderTypes[i].pEmissiveMapSampler, g_shaderTypes[i].pShader, "u_EmissiveSampler");
+    vcShader_GetSamplerIndex(&g_shaderTypes[i].pOcclusionMapSampler, g_shaderTypes[i].pShader, "u_OcclusionSampler");
+  }
+}
+
+void vcGLTF_DestroyGlobalShaders()
+{
+  for (int i = 0; i < vcRSB_Count; ++i)
+  {
+    vcShader_ReleaseConstantBuffer(g_shaderTypes[i].pShader, g_shaderTypes[i].pVertUniformBuffer);
+    vcShader_ReleaseConstantBuffer(g_shaderTypes[i].pShader, g_shaderTypes[i].pFragUniformBuffer);
+
+    vcShader_DestroyShader(&g_shaderTypes[i].pShader);
+  }
 }
 
 udResult vcGLTF_LoadBuffer(vcGLTFScene *pScene, const udJSON &root, int bufferID)
@@ -449,6 +523,22 @@ void vcGLTF_LoadTexture(vcGLTFScene *pScene, const udJSON &root, int textureID)
   }
 }
 
+udFloat3 GetNormal(int i0, int i1, int i2, uint8_t *pBufferStart, ptrdiff_t byteStride)
+{
+  float *pPF = nullptr;
+
+  pPF = (float*)(pBufferStart + (i0) * byteStride);
+  udFloat3 p0 = { pPF[0], pPF[1], pPF[2] };
+
+  pPF = (float*)(pBufferStart + (i1) * byteStride);
+  udFloat3 p1 = { pPF[0], pPF[1], pPF[2] };
+
+  pPF = (float*)(pBufferStart + (i2) * byteStride);
+  udFloat3 p2 = { pPF[0], pPF[1], pPF[2] };
+
+  return udCross(p1 - p0, p2 - p0);
+}
+
 udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
 {
   const udJSON &mesh = root.Get("meshes[%d]", meshID);
@@ -457,13 +547,12 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
   pScene->pMeshes[meshID].numPrimitives = numPrimitives;
   pScene->pMeshes[meshID].pPrimitives = udAllocType(vcGLTFMeshPrimitive, numPrimitives, udAF_Zero);
 
-  printf("Mesh Primitives: %d", numPrimitives);
-
   for (int i = 0; i < numPrimitives; ++i)
   {
     const udJSON &primitive = mesh.Get("primitives[%d]", i);
 
     vcMeshFlags meshFlags = vcMF_None;
+    vcGLTFFeatureBits featureBits = vcRSB_None;
 
     int mode = primitive.Get("mode").AsInt(4); // Points, Lines, Triangles
     int material = primitive.Get("material").AsInt(-1);
@@ -535,6 +624,8 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
 
         if (indexType == vcGLTFType_Int16 || indexType == vcGLTFType_UInt16)
           meshFlags = meshFlags | vcMF_IndexShort;
+        else if (indexType == vcGLTFType_Int8 || indexType == vcGLTFType_UInt8)
+          meshFlags = meshFlags | vcMF_IndexChar;
         else if (indexType != vcGLTFType_Int32)
           __debugbreak();
 
@@ -552,6 +643,20 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
 
     int maxCount = -1;
     bool hasNormals = false;
+
+    struct
+    {
+      const char *pAttrName;
+      const char *pAccessorType;
+      vcVertexLayoutTypes type;
+      vcGLTFFeatureBits featureBits;
+    } supportedTypes[] = {
+      { "POSITION", "VEC3", vcVLT_Position3, vcRSB_None },
+      { "NORMAL", "VEC3", vcVLT_Normal3, vcRSB_None },
+      { "TANGENT", "VEC4", vcVLT_Tangent4, vcRSB_Tangents },
+      { "TEXCOORD_0", "VEC2", vcVLT_TextureCoords2_0, vcRSB_UVSet0 },
+      { "TEXCOORD_1", "VEC2", vcVLT_TextureCoords2_1, vcRSB_UVSet1 },
+    };
 
     for (size_t j = 0; j < totalAttributes; ++j)
     {
@@ -579,44 +684,23 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
       if (attributeType != vcGLTFType_F32)
         __debugbreak();
 
-      if (udStrEqual(pAttributeName, "POSITION"))
-      {
-        if (udStrEqual(pAccessorType, "VEC2"))
-          pTypes[j] = vcVLT_Position2;
-        else if (udStrEqual(pAccessorType, "VEC3"))
-          pTypes[j] = vcVLT_Position3;
-        else if (udStrEqual(pAccessorType, "VEC4"))
-          pTypes[j] = vcVLT_Position4;
-        else
-          __debugbreak();
-      }
-      else if (udStrEqual(pAttributeName, "NORMAL"))
-      {
-        hasNormals = true;
+      pTypes[j] = vcVLT_Unsupported;
 
-        if (udStrEqual(pAccessorType, "VEC3"))
-          pTypes[j] = vcVLT_Normal3;
-        else
-          __debugbreak();
-      }
-      else if (udStrEqual(pAttributeName, "TANGENT"))
+      for (size_t stIter = 0; stIter < udLengthOf(supportedTypes); ++stIter)
       {
-        if (udStrEqual(pAccessorType, "VEC4"))
-          pTypes[j] = vcVLT_Tangent4;
-        else
-          __debugbreak();
+        if (udStrEqual(pAttributeName, supportedTypes[stIter].pAttrName) && udStrEqual(pAccessorType, supportedTypes[stIter].pAccessorType))
+        {
+          pTypes[j] = supportedTypes[stIter].type;
+          featureBits = (vcGLTFFeatureBits)(featureBits | supportedTypes[stIter].featureBits);
+          break;
+        }
       }
-      else if (udStrEqual(pAttributeName, "TEXCOORD_0"))
-      {
-        if (udStrEqual(pAccessorType, "VEC2"))
-          pTypes[j] = vcVLT_TextureCoords2;
-        else
-          __debugbreak();
-      }
-      else
-      {
+
+      if (pTypes[j] == vcVLT_Normal3)
+        hasNormals = true;
+      
+      if (pTypes[j] == vcVLT_Unsupported)
         __debugbreak();
-      }
     }
 
     if (!hasNormals)
@@ -624,6 +708,8 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
       pTypes[totalAttributes] = vcVLT_Normal3;
       ++totalAttributes;
     }
+
+    vcLayout_Sort(pTypes, totalAttributes);
 
     uint32_t vertexStride = vcLayout_GetSize(pTypes, totalAttributes);
     uint8_t *pVertData = udAllocType(uint8_t, vertexStride * maxCount, udAF_Zero);
@@ -667,27 +753,51 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
         {
           float *pVertFloats = (float*)(pVertData + vertexStride * vi + offset);
 
-          udFloat3 normal = {};
+          udFloat3 normal = { 0.f, 0.f, 1.f };
 
           if (pIndexBuffer == nullptr)
           {
             int triangleStart = (vi / 3);
-            float *pPF = nullptr;
-            
-            pPF = (float*)(pScene->pBuffers[bufferID].pBytes + byteOffset + (triangleStart+0) * byteStride);
-            udFloat3 p0 = { pPF[0], pPF[1], pPF[2] };
-
-            pPF = (float*)(pScene->pBuffers[bufferID].pBytes + byteOffset + (triangleStart+1) * byteStride);
-            udFloat3 p1 = { pPF[0], pPF[1], pPF[2] };
-            
-            pPF = (float*)(pScene->pBuffers[bufferID].pBytes + byteOffset + (triangleStart+2) * byteStride);
-            udFloat3 p2 = { pPF[0], pPF[1], pPF[2] };
-
-            normal = udCross(p1-p0, p2-p0);
+            normal = GetNormal(triangleStart, triangleStart + 1, triangleStart + 2, pScene->pBuffers[bufferID].pBytes + byteOffset, byteStride);
           }
           else
           {
-            __debugbreak(); // Need to find the triangles this vert is used in and average them
+            if (meshFlags & vcMF_IndexChar)
+            {
+              uint8_t *pIndices = (uint8_t*)pIndexBuffer;
+              for (int indexIter = 0; indexIter < indexCount; ++indexIter)
+              {
+                if (pIndices[indexIter] == vi)
+                {
+                  int triangleStart = (indexIter / 3) * 3;
+                  normal = GetNormal(pIndices[triangleStart], pIndices[triangleStart + 1], pIndices[triangleStart + 2], pScene->pBuffers[bufferID].pBytes + byteOffset, byteStride);
+                }
+              }
+            }
+            else if (meshFlags & vcMF_IndexShort)
+            {
+              uint16_t *pIndices = (uint16_t*)pIndexBuffer;
+              for (int indexIter = 0; indexIter < indexCount; ++indexIter)
+              {
+                if (pIndices[indexIter] == vi)
+                {
+                  int triangleStart = (indexIter / 3) * 3;
+                  normal = GetNormal(pIndices[triangleStart], pIndices[triangleStart + 1], pIndices[triangleStart + 2], pScene->pBuffers[bufferID].pBytes + byteOffset, byteStride);
+                }
+              }
+            }
+            else
+            {
+              int32_t *pIndices = (int32_t*)pIndexBuffer;
+              for (int indexIter = 0; indexIter < indexCount; ++indexIter)
+              {
+                if (pIndices[indexIter] == vi)
+                {
+                  int triangleStart = (indexIter / 3) * 3;
+                  normal = GetNormal(pIndices[triangleStart], pIndices[triangleStart + 1], pIndices[triangleStart + 2], pScene->pBuffers[bufferID].pBytes + byteOffset, byteStride);
+                }
+              }
+            }
           }
 
           for (int element = 0; element < count; ++element)
@@ -698,7 +808,20 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
       }
       else
       {
-        int attributeAccessorIndex = attributes.GetMember(ai)->AsInt(0);
+        int attributeAccessorIndex = -1;
+        
+        for (size_t atIter = 0; atIter < attributes.MemberCount() && attributeAccessorIndex == -1; ++atIter)
+        {
+          for (size_t stIter = 0; stIter < udLengthOf(supportedTypes); ++stIter)
+          {
+            if (supportedTypes[stIter].type == pTypes[ai] && udStrEqual(attributes.GetMemberName(atIter), supportedTypes[stIter].pAttrName))
+            {
+              attributeAccessorIndex = attributes.GetMember(atIter)->AsInt();
+              break;
+            }
+          }
+        }
+
         const udJSON& accessor = root.Get("accessors[%d]", attributeAccessorIndex);
 
         int bufferViewID = accessor.Get("bufferView").AsInt(-1);
@@ -752,13 +875,11 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
       }
     }
 
-    if (s_pBasicShader == nullptr)
-    {
-      s_pShaderTypes = (vcVertexLayoutTypes*)udMemDup(pTypes, sizeof(vcVertexLayoutTypes)*totalAttributes, 0, udAF_None);
-      s_shaderTotalAttributes = totalAttributes;
-      vcGLTF_GenShader();
-    }
-    
+    // Bind the correct shader
+    pScene->pMeshes[meshID].pPrimitives[i].features = featureBits;
+
+    vcShader_Bind(g_shaderTypes[featureBits].pShader);
+
     if (pIndexBuffer == nullptr)
       vcMesh_Create(&pScene->pMeshes[meshID].pPrimitives[i].pMesh, pTypes, totalAttributes, pVertData, maxCount, nullptr, 0, vcMF_NoIndexBuffer | meshFlags);
     else
@@ -773,7 +894,21 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
 
 udResult vcGLTF_ProcessChildNode(vcGLTFScene *pScene, const udJSON &root, const udJSON &child, udDouble4x4 parentMatrix)
 {
-  udDouble4x4 childMatrix = child.Get("matrix").AsDouble4x4();
+  udDouble4x4 childMatrix = udDouble4x4::identity();
+  
+  if (child.Get("matrix").IsArray())
+  {
+    child.Get("matrix").AsDouble4x4();
+  }
+  else
+  {
+    udDouble3 translation = child.Get("translation").AsDouble3();
+    udDoubleQuat rotation = child.Get("rotation").AsQuaternion();
+    udDouble3 scale = child.Get("scale").AsDouble3(udDouble3::one());
+
+    childMatrix = udDouble4x4::rotationQuat(rotation, translation) * udDouble4x4::scaleNonUniform(scale);
+  }
+
   udDouble4x4 chainedMatrix = parentMatrix * childMatrix;
 
   if (!child.Get("mesh").IsVoid())
@@ -794,9 +929,9 @@ udResult vcGLTF_ProcessChildNode(vcGLTFScene *pScene, const udJSON &root, const 
     for (int i = 0; i < child.Get("children").ArrayLength(); ++i)
       vcGLTF_ProcessChildNode(pScene, root, root.Get("nodes[%d]", child.Get("children[%zu]", i).AsInt()), chainedMatrix);
   }
-  else if (!child.Get("camera").IsVoid())
+  else if (!child.Get("camera").IsVoid() || !child.Get("light").IsVoid() || !child.Get("Light").IsVoid())
   {
-    // We don't care about cameras
+    // We don't care about these
   }
   else
   {
@@ -807,7 +942,7 @@ udResult vcGLTF_ProcessChildNode(vcGLTFScene *pScene, const udJSON &root, const 
   return udR_Success;
 }
 
-udResult vcGLTF_LoadPolygonModel(vcGLTFScene **ppScene, const char *pFilename, udWorkerPool *pWorkerPool)
+udResult vcGLTF_Load(vcGLTFScene **ppScene, const char *pFilename, udWorkerPool *pWorkerPool)
 {
   udUnused(pWorkerPool);
 
@@ -843,7 +978,7 @@ udResult vcGLTF_LoadPolygonModel(vcGLTFScene **ppScene, const char *pFilename, u
   pScene->ppTextures = udAllocType(vcTexture*, pScene->textureCount, udAF_Zero);
 
   baseScene = gltfData.Get("scene").AsInt();
-  pSceneNodes = gltfData.Get("scenes[%d].nodes").AsArray();
+  pSceneNodes = gltfData.Get("scenes[%d].nodes", baseScene).AsArray();
   for (size_t i = 0; i < pSceneNodes->length; ++i)
   {
     vcGLTF_ProcessChildNode(pScene, gltfData, gltfData.Get("nodes[%d]", pSceneNodes->GetElement(i)->AsInt()), udDouble4x4::identity());
@@ -870,6 +1005,14 @@ void vcGLTF_Destroy(vcGLTFScene **ppScene)
   vcGLTFScene *pScene = *ppScene;
   *ppScene = nullptr;
 
+  for (int i = 0; i < pScene->meshCount; ++i)
+  {
+    for (int j = 0; j < pScene->pMeshes[i].numPrimitives; ++j)
+    {
+      vcMesh_Destroy(&pScene->pMeshes[i].pPrimitives[j].pMesh);
+    }
+  }
+
   udFree(pScene->pBuffers);
   pScene->meshInstances.Deinit();
   pScene->nodes.Deinit();
@@ -887,16 +1030,15 @@ bool g_allowOcclusionMaps = true;
 
 udResult vcGLTF_Render(vcGLTFScene *pScene, udRay<double> camera, udDouble4x4 worldMatrix, udDouble4x4 viewMatrix, udDouble4x4 projectionMatrix)
 {
-  vcShader_Bind(s_pBasicShader);
+  int bound = -1;
 
-  static udDouble4x4 SpaceChange = { 1, 0, 0, 0,   0, 0, 1, 0,   0, -1, 0, 0,   0, 0, 0, 1 };
+  static udDouble4x4 SpaceChange = { 1, 0, 0, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1 };
 
   for (size_t i = 0; i < pScene->meshInstances.length; ++i)
   {
     s_gltfVertInfo.u_ModelMatrix = udFloat4x4::create(worldMatrix * SpaceChange * pScene->meshInstances[i].matrix);
     s_gltfVertInfo.u_ViewProjectionMatrix = udFloat4x4::create(projectionMatrix * viewMatrix);
     s_gltfVertInfo.u_NormalMatrix = udFloat4x4::create(udTranspose(udInverse(worldMatrix * SpaceChange * pScene->meshInstances[i].matrix)));
-    vcShader_BindConstantBuffer(s_pBasicShader, s_pBasicShaderVertUniformBuffer, &s_gltfVertInfo, sizeof(s_gltfVertInfo));
 
     s_gltfFragInfo.u_Camera = udFloat3::create(camera.position);
 
@@ -919,77 +1061,93 @@ udResult vcGLTF_Render(vcGLTFScene *pScene, udRay<double> camera, udDouble4x4 wo
 
     for (int j = 0; j < pScene->pMeshes[pScene->meshInstances[i].meshID].numPrimitives; ++j)
     {
+      const vcGLTFMeshPrimitive &prim = pScene->pMeshes[pScene->meshInstances[i].meshID].pPrimitives[j];
+      const vcGLTFShader &shader = g_shaderTypes[prim.features];
+
+      if (bound != prim.features)
+      {
+        vcShader_Bind(shader.pShader);
+        vcShader_BindConstantBuffer(shader.pShader, shader.pVertUniformBuffer, &s_gltfVertInfo, sizeof(s_gltfVertInfo));
+
+        bound = prim.features;
+      }
+
       //Material
-      s_gltfFragInfo.u_EmissiveFactor = pScene->pMeshes[pScene->meshInstances[i].meshID].pPrimitives[j].emissiveFactor;
-      s_gltfFragInfo.u_BaseColorFactor = pScene->pMeshes[pScene->meshInstances[i].meshID].pPrimitives[j].baseColorFactor;
-      s_gltfFragInfo.u_MetallicFactor = pScene->pMeshes[pScene->meshInstances[i].meshID].pPrimitives[j].metallicFactor;
-      s_gltfFragInfo.u_RoughnessFactor = pScene->pMeshes[pScene->meshInstances[i].meshID].pPrimitives[j].roughnessFactor;
+      s_gltfFragInfo.u_EmissiveFactor = prim.emissiveFactor;
+      s_gltfFragInfo.u_BaseColorFactor = prim.baseColorFactor;
+      s_gltfFragInfo.u_MetallicFactor = prim.metallicFactor;
+      s_gltfFragInfo.u_RoughnessFactor = prim.roughnessFactor;
 
       s_gltfFragInfo.u_Exposure = 1.f;
-      s_gltfFragInfo.u_NormalScale = (float)pScene->pMeshes[pScene->meshInstances[i].meshID].pPrimitives[j].normalScale;
+      s_gltfFragInfo.u_NormalScale = (float)prim.normalScale;
 
-      s_gltfFragInfo.u_alphaMode = pScene->pMeshes[pScene->meshInstances[i].meshID].pPrimitives[j].alpaMode;
-      s_gltfFragInfo.u_AlphaCutoff = pScene->pMeshes[pScene->meshInstances[i].meshID].pPrimitives[j].alphaCutoff;
+      s_gltfFragInfo.u_alphaMode = prim.alpaMode;
+      s_gltfFragInfo.u_AlphaCutoff = prim.alphaCutoff;
 
-      if (g_allowNormalMaps && pScene->pMeshes[pScene->meshInstances[i].meshID].pPrimitives[j].normalTexture >= 0)
+      if (prim.alpaMode == vcGLTFAM_Blend)
+        vcGLState_SetBlendMode(vcGLSBM_Interpolative);
+      else
+        vcGLState_SetBlendMode(vcGLSBM_None);
+
+      if (g_allowNormalMaps && prim.normalTexture >= 0)
       {
         s_gltfFragInfo.u_NormalUVSet = 0;
-        vcShader_BindTexture(s_pBasicShader, pScene->ppTextures[pScene->pMeshes[pScene->meshInstances[i].meshID].pPrimitives[j].normalTexture], 0, s_pBasicShaderNormalMapSampler);
+        vcShader_BindTexture(shader.pShader, pScene->ppTextures[prim.normalTexture], 0, shader.pNormalMapSampler);
       }
       else
       {
         s_gltfFragInfo.u_NormalUVSet = -1;
       }
 
-      if (g_allowEmissiveMaps && pScene->pMeshes[pScene->meshInstances[i].meshID].pPrimitives[j].emissiveTexture >= 0)
+      if (g_allowEmissiveMaps && prim.emissiveTexture >= 0)
       {
         s_gltfFragInfo.u_EmissiveUVSet = 0;
-        vcShader_BindTexture(s_pBasicShader, pScene->ppTextures[pScene->pMeshes[pScene->meshInstances[i].meshID].pPrimitives[j].emissiveTexture], 0, s_pBasicShaderEmissiveMapSampler);
+        vcShader_BindTexture(shader.pShader, pScene->ppTextures[prim.emissiveTexture], 0, shader.pEmissiveMapSampler);
       }
       else
       {
         s_gltfFragInfo.u_EmissiveUVSet = -1;
       }
 
-      if (g_allowOcclusionMaps && pScene->pMeshes[pScene->meshInstances[i].meshID].pPrimitives[j].occlusionTexture >= 0)
+      if (g_allowOcclusionMaps && prim.occlusionTexture >= 0)
       {
         s_gltfFragInfo.u_OcclusionUVSet = 0;
         s_gltfFragInfo.u_OcclusionStrength = 1.f;
-        vcShader_BindTexture(s_pBasicShader, pScene->ppTextures[pScene->pMeshes[pScene->meshInstances[i].meshID].pPrimitives[j].occlusionTexture], 0, s_pBasicShaderOcclusionMapSampler);
+        vcShader_BindTexture(shader.pShader, pScene->ppTextures[prim.occlusionTexture], 0, shader.pOcclusionMapSampler);
       }
       else
       {
         s_gltfFragInfo.u_OcclusionUVSet = -1;
       }
 
-      if (g_allowBaseColourMaps && pScene->pMeshes[pScene->meshInstances[i].meshID].pPrimitives[j].baseColorTexture >= 0)
+      if (g_allowBaseColourMaps && prim.baseColorTexture >= 0)
       {
         s_gltfFragInfo.u_BaseColorUVSet = 0;
-        vcShader_BindTexture(s_pBasicShader, pScene->ppTextures[pScene->pMeshes[pScene->meshInstances[i].meshID].pPrimitives[j].baseColorTexture], 0, s_pBasicShaderBaseColourSampler);
+        vcShader_BindTexture(shader.pShader, pScene->ppTextures[prim.baseColorTexture], 0, shader.pBaseColourSampler);
       }
       else
       {
         s_gltfFragInfo.u_BaseColorUVSet = -1;
       }
 
-      if (g_allowMetalRoughMaps && pScene->pMeshes[pScene->meshInstances[i].meshID].pPrimitives[j].metallicRoughnessTexture >= 0)
+      if (g_allowMetalRoughMaps && prim.metallicRoughnessTexture >= 0)
       {
         s_gltfFragInfo.u_MetallicRoughnessUVSet = 0;
-        vcShader_BindTexture(s_pBasicShader, pScene->ppTextures[pScene->pMeshes[pScene->meshInstances[i].meshID].pPrimitives[j].metallicRoughnessTexture], 0, s_pBasicShaderMetallicRoughnessSampler);
+        vcShader_BindTexture(shader.pShader, pScene->ppTextures[prim.metallicRoughnessTexture], 0, shader.pMetallicRoughnessSampler);
       }
       else
       {
         s_gltfFragInfo.u_MetallicRoughnessUVSet = -1;
       }
 
-      vcShader_BindConstantBuffer(s_pBasicShader, s_pBasicShaderFragUniformBuffer, &s_gltfFragInfo, sizeof(s_gltfFragInfo));
+      vcShader_BindConstantBuffer(shader.pShader, shader.pFragUniformBuffer, &s_gltfFragInfo, sizeof(s_gltfFragInfo));
 
-      if (pScene->pMeshes[pScene->meshInstances[i].meshID].pPrimitives[j].doubleSided)
+      if (prim.doubleSided)
         vcGLState_SetFaceMode(vcGLSFM_Solid, vcGLSCM_None, true, false);
       else
         vcGLState_SetFaceMode(vcGLSFM_Solid, vcGLSCM_Back, true, false);
 
-      vcMesh_Render(pScene->pMeshes[pScene->meshInstances[i].meshID].pPrimitives[j].pMesh);
+      vcMesh_Render(prim.pMesh);
     }
   }
 
