@@ -34,6 +34,7 @@ enum vcGLTFFeatures
   vcRSF_HasTangents,
   vcRSF_HasUVSet0,
   vcRSF_HasUVSet1,
+  vcRSF_HasColour,
 
   vcRSF_Count
 };
@@ -45,6 +46,7 @@ enum vcGLTFFeatureBits
   vcRSB_Tangents = 1 << vcRSF_HasTangents,
   vcRSB_UVSet0 = 1 << vcRSF_HasUVSet0,
   vcRSB_UVSet1 = 1 << vcRSF_HasUVSet1,
+  vcRSB_Colour = 1 << vcRSF_HasColour,
 
   vcRSB_Count = 1 << vcRSF_Count
 };
@@ -74,18 +76,23 @@ struct vcGLTFMeshPrimitive
 
   udFloat4 baseColorFactor;
   int baseColorTexture;
+  int baseColorUVSet;
 
   float metallicFactor;
   float roughnessFactor;
   int metallicRoughnessTexture;
+  int metallicRoughnessUVSet;
 
   double normalScale;
   int normalTexture;
+  int normalUVSet;
 
   int emissiveTexture;
   udFloat3 emissiveFactor;
+  int emissiveUVSet;
 
   int occlusionTexture;
+  int occlusionUVSet;
   
   bool doubleSided;
   vcGLTF_AlphaMode alpaMode;
@@ -411,6 +418,9 @@ void vcGLTF_GenerateGlobalShaders()
   types[vcRSF_HasUVSet1].pDefine = "HAS_UV_SET2";
   types[vcRSF_HasUVSet1].layoutType = vcVLT_TextureCoords2_1;
 
+  types[vcRSF_HasColour].pDefine = "HAS_VERTEX_COLOR";
+  types[vcRSF_HasColour].layoutType = vcVLT_ColourBGRA;
+
   const int RequiredDefines = 2;
   const char* defines[RequiredDefines + vcRSF_Count] = {};
   defines[0] = "MATERIAL_METALLICROUGHNESS";
@@ -560,30 +570,36 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
     if (mode != 4)
       __debugbreak();
 
-    if (material >= 0 && material < root.Get("materials").ArrayLength())
+    // This check can't be done because the material needs to be setup correctly
+    //if (material >= 0 && material < root.Get("materials").ArrayLength())
     {
       pScene->pMeshes[meshID].pPrimitives[i].baseColorFactor = root.Get("materials[%d].pbrMetallicRoughness.baseColorFactor", material).AsFloat4(udFloat4::one());
       pScene->pMeshes[meshID].pPrimitives[i].baseColorTexture = root.Get("materials[%d].pbrMetallicRoughness.baseColorTexture.index", material).AsInt(-1);
+      pScene->pMeshes[meshID].pPrimitives[i].baseColorUVSet = root.Get("materials[%d].pbrMetallicRoughness.baseColorTexture.texCoord", material).AsInt(0);
       if (pScene->pMeshes[meshID].pPrimitives[i].baseColorTexture != -1)
         vcGLTF_LoadTexture(pScene, root, pScene->pMeshes[meshID].pPrimitives[i].baseColorTexture);
 
       pScene->pMeshes[meshID].pPrimitives[i].metallicFactor = root.Get("materials[%d].pbrMetallicRoughness.metallicFactor", material).AsFloat(1.f);
       pScene->pMeshes[meshID].pPrimitives[i].roughnessFactor = root.Get("materials[%d].pbrMetallicRoughness.roughnessFactor", material).AsFloat(1.f);
       pScene->pMeshes[meshID].pPrimitives[i].metallicRoughnessTexture = root.Get("materials[%d].pbrMetallicRoughness.metallicRoughnessTexture.index", material).AsInt(-1);
+      pScene->pMeshes[meshID].pPrimitives[i].metallicRoughnessUVSet = root.Get("materials[%d].pbrMetallicRoughness.metallicRoughnessTexture.texCoord", material).AsInt(0);
       if (pScene->pMeshes[meshID].pPrimitives[i].metallicRoughnessTexture != -1)
         vcGLTF_LoadTexture(pScene, root, pScene->pMeshes[meshID].pPrimitives[i].metallicRoughnessTexture);
 
       pScene->pMeshes[meshID].pPrimitives[i].normalScale = root.Get("materials[%d].normalTexture.scale", material).AsDouble(1.0);
       pScene->pMeshes[meshID].pPrimitives[i].normalTexture = root.Get("materials[%d].normalTexture.index", material).AsInt(-1);
+      pScene->pMeshes[meshID].pPrimitives[i].normalUVSet = root.Get("materials[%d].normalTexture.texCoord", material).AsInt(0);
       if (pScene->pMeshes[meshID].pPrimitives[i].normalTexture != -1)
         vcGLTF_LoadTexture(pScene, root, pScene->pMeshes[meshID].pPrimitives[i].normalTexture);
       
       pScene->pMeshes[meshID].pPrimitives[i].emissiveFactor = root.Get("materials[%d].emissiveFactor", material).AsFloat3();
       pScene->pMeshes[meshID].pPrimitives[i].emissiveTexture = root.Get("materials[%d].emissiveTexture.index", material).AsInt(-1);
+      pScene->pMeshes[meshID].pPrimitives[i].emissiveUVSet = root.Get("materials[%d].emissiveTexture.texCoord", material).AsInt(0);
       if (pScene->pMeshes[meshID].pPrimitives[i].emissiveTexture != -1)
         vcGLTF_LoadTexture(pScene, root, pScene->pMeshes[meshID].pPrimitives[i].emissiveTexture);
 
       pScene->pMeshes[meshID].pPrimitives[i].occlusionTexture = root.Get("materials[%d].occlusionTexture.index", material).AsInt(-1);
+      pScene->pMeshes[meshID].pPrimitives[i].occlusionUVSet = root.Get("materials[%d].occlusionTexture.texCoord", material).AsInt(0);
       if (pScene->pMeshes[meshID].pPrimitives[i].occlusionTexture != -1)
         vcGLTF_LoadTexture(pScene, root, pScene->pMeshes[meshID].pPrimitives[i].occlusionTexture);
 
@@ -593,14 +609,14 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
       if (udStrEquali(pAlphaModeStr, "MASK"))
       {
         pScene->pMeshes[meshID].pPrimitives[i].alpaMode = vcGLTFAM_Mask;
-        pScene->pMeshes[meshID].pPrimitives[i].alphaCutoff = root.Get("materials[%d].alphaCutoff").AsFloat(0.5f);
+        pScene->pMeshes[meshID].pPrimitives[i].alphaCutoff = root.Get("materials[%d].alphaCutoff", material).AsFloat(0.5f);
       }
       else if (udStrEquali(pAlphaModeStr, "BLEND"))
       {
         pScene->pMeshes[meshID].pPrimitives[i].alpaMode = vcGLTFAM_Blend;
       }
 
-      pScene->pMeshes[meshID].pPrimitives[i].doubleSided = root.Get("materials[%d].alphaMode", material).AsBool(false);
+      pScene->pMeshes[meshID].pPrimitives[i].doubleSided = root.Get("materials[%d].doubleSided", material).AsBool(false);
     }
 
     int indexAccessor = primitive.Get("indices").AsInt(-1);
@@ -626,7 +642,7 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
           meshFlags = meshFlags | vcMF_IndexShort;
         else if (indexType == vcGLTFType_Int8 || indexType == vcGLTFType_UInt8)
           meshFlags = meshFlags | vcMF_IndexChar;
-        else if (indexType != vcGLTFType_Int32)
+        else if (indexType != vcGLTFType_Int32 && indexType != vcGLTFType_Uint32)
           __debugbreak();
 
         if (bufferID < pScene->bufferCount && pScene->pBuffers[bufferID].pBytes == nullptr)
@@ -656,6 +672,8 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
       { "TANGENT", "VEC4", vcVLT_Tangent4, vcRSB_Tangents },
       { "TEXCOORD_0", "VEC2", vcVLT_TextureCoords2_0, vcRSB_UVSet0 },
       { "TEXCOORD_1", "VEC2", vcVLT_TextureCoords2_1, vcRSB_UVSet1 },
+      { "COLOR_0", "VEC3", vcVLT_ColourBGRA, vcRSB_Colour },
+      { "COLOR_0", "VEC4", vcVLT_ColourBGRA, vcRSB_Colour },
     };
 
     for (size_t j = 0; j < totalAttributes; ++j)
@@ -836,7 +854,15 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
         int count = 3;
         int offset = totalOffset;
 
-        if (udStrEqual(pAccessorType, "VEC3"))
+        if (pTypes[ai] == vcVLT_ColourBGRA)
+        {
+          if (udStrEqual(pAccessorType, "VEC3"))
+            count = 3;
+          else
+            count = 4;
+          totalOffset += sizeof(uint32_t);
+        }
+        else if (udStrEqual(pAccessorType, "VEC3"))
         {
           count = 3;
           totalOffset += (count * sizeof(float));
@@ -862,14 +888,34 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
         if (byteStride == 0)
           byteStride = count * sizeof(float);
 
-        for (int vi = 0; vi < maxCount; ++vi)
+        if (pTypes[ai] == vcVLT_ColourBGRA)
         {
-          float *pFloats = (float*)(pScene->pBuffers[bufferID].pBytes + byteOffset + vi * byteStride);
-          float *pVertFloats = (float*)(pVertData + vertexStride * vi + offset);
-
-          for (int element = 0; element < count; ++element)
+          for (int vi = 0; vi < maxCount; ++vi)
           {
-            pVertFloats[element] = pFloats[element];
+            float *pFloats = (float*)(pScene->pBuffers[bufferID].pBytes + byteOffset + vi * byteStride);
+            int32_t *pVertI32 = (int32_t*)(pVertData + vertexStride * vi + offset);
+
+            uint32_t temp = ((int(udRound(pFloats[0] * 255.f)) & 0xFF) << 0) | ((int(udRound(pFloats[1] * 255.f)) & 0xFF) << 8) | ((int(udRound(pFloats[2] * 255.f)) & 0xFF) << 16);
+
+            if (count == 3)
+              temp |= 0xFF000000;
+            else
+              temp |= (int(pFloats[3] * 255.f) << 24);
+
+            pVertI32[0] = temp;
+          }
+        }
+        else
+        {
+          for (int vi = 0; vi < maxCount; ++vi)
+          {
+            float *pFloats = (float*)(pScene->pBuffers[bufferID].pBytes + byteOffset + vi * byteStride);
+            float *pVertFloats = (float*)(pVertData + vertexStride * vi + offset);
+
+            for (int element = 0; element < count; ++element)
+            {
+              pVertFloats[element] = pFloats[element];
+            }
           }
         }
       }
@@ -898,14 +944,14 @@ udResult vcGLTF_ProcessChildNode(vcGLTFScene *pScene, const udJSON &root, const 
   
   if (child.Get("matrix").IsArray())
   {
-    child.Get("matrix").AsDouble4x4();
+    childMatrix = child.Get("matrix").AsDouble4x4();
   }
   else
   {
     udDouble3 translation = child.Get("translation").AsDouble3();
     udDoubleQuat rotation = child.Get("rotation").AsQuaternion();
     udDouble3 scale = child.Get("scale").AsDouble3(udDouble3::one());
-
+    
     childMatrix = udDouble4x4::rotationQuat(rotation, translation) * udDouble4x4::scaleNonUniform(scale);
   }
 
@@ -929,9 +975,13 @@ udResult vcGLTF_ProcessChildNode(vcGLTFScene *pScene, const udJSON &root, const 
     for (int i = 0; i < child.Get("children").ArrayLength(); ++i)
       vcGLTF_ProcessChildNode(pScene, root, root.Get("nodes[%d]", child.Get("children[%zu]", i).AsInt()), chainedMatrix);
   }
-  else if (!child.Get("camera").IsVoid() || !child.Get("light").IsVoid() || !child.Get("Light").IsVoid())
+  else if (!child.Get("camera").IsVoid() || !child.Get("light").IsVoid())
   {
     // We don't care about these
+  }
+  else if (child.Get("name").IsString())
+  {
+    // We don't care about these?
   }
   else
   {
@@ -1032,13 +1082,13 @@ udResult vcGLTF_Render(vcGLTFScene *pScene, udRay<double> camera, udDouble4x4 wo
 {
   int bound = -1;
 
-  static udDouble4x4 SpaceChange = { 1, 0, 0, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1 };
+  udDouble4x4 SpaceChange = { 1, 0, 0, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1 };
 
   for (size_t i = 0; i < pScene->meshInstances.length; ++i)
   {
     s_gltfVertInfo.u_ModelMatrix = udFloat4x4::create(worldMatrix * SpaceChange * pScene->meshInstances[i].matrix);
     s_gltfVertInfo.u_ViewProjectionMatrix = udFloat4x4::create(projectionMatrix * viewMatrix);
-    s_gltfVertInfo.u_NormalMatrix = udFloat4x4::create(udTranspose(udInverse(worldMatrix * SpaceChange * pScene->meshInstances[i].matrix)));
+    s_gltfVertInfo.u_NormalMatrix = udTranspose(udInverse(s_gltfVertInfo.u_ModelMatrix));
 
     s_gltfFragInfo.u_Camera = udFloat3::create(camera.position);
 
@@ -1046,14 +1096,14 @@ udResult vcGLTF_Render(vcGLTFScene *pScene, udRay<double> camera, udDouble4x4 wo
     // Directional Lights
     s_gltfFragInfo.u_Lights[0].direction = udNormalize(udFloat3::create(0.f, -0.1f, -0.9f));
     s_gltfFragInfo.u_Lights[0].color = { 0.9f, 0.8f, 1.f };
-    s_gltfFragInfo.u_Lights[0].intensity = 1.f;
+    s_gltfFragInfo.u_Lights[0].intensity = 10.f;
     s_gltfFragInfo.u_Lights[0].type = 0;
 
     // Pointlight
     s_gltfFragInfo.u_Lights[1].direction = udFloat3::create(camera.direction);
     s_gltfFragInfo.u_Lights[1].position = udFloat3::create(camera.position);
-    s_gltfFragInfo.u_Lights[1].color = { 0.1f, 0.1f, 1.f };
-    s_gltfFragInfo.u_Lights[1].intensity = 100.f;
+    s_gltfFragInfo.u_Lights[1].color = { 1.0f, 1.0f, 1.f };
+    s_gltfFragInfo.u_Lights[1].intensity = 1.f;
     s_gltfFragInfo.u_Lights[1].range = 100000.f;
     s_gltfFragInfo.u_Lights[1].type = 2;
     s_gltfFragInfo.u_Lights[1].innerConeCos = udCos(UD_PIf / 8.f);
@@ -1067,10 +1117,10 @@ udResult vcGLTF_Render(vcGLTFScene *pScene, udRay<double> camera, udDouble4x4 wo
       if (bound != prim.features)
       {
         vcShader_Bind(shader.pShader);
-        vcShader_BindConstantBuffer(shader.pShader, shader.pVertUniformBuffer, &s_gltfVertInfo, sizeof(s_gltfVertInfo));
-
         bound = prim.features;
       }
+
+      vcShader_BindConstantBuffer(shader.pShader, shader.pVertUniformBuffer, &s_gltfVertInfo, sizeof(s_gltfVertInfo));
 
       //Material
       s_gltfFragInfo.u_EmissiveFactor = prim.emissiveFactor;
@@ -1089,40 +1139,9 @@ udResult vcGLTF_Render(vcGLTFScene *pScene, udRay<double> camera, udDouble4x4 wo
       else
         vcGLState_SetBlendMode(vcGLSBM_None);
 
-      if (g_allowNormalMaps && prim.normalTexture >= 0)
-      {
-        s_gltfFragInfo.u_NormalUVSet = 0;
-        vcShader_BindTexture(shader.pShader, pScene->ppTextures[prim.normalTexture], 0, shader.pNormalMapSampler);
-      }
-      else
-      {
-        s_gltfFragInfo.u_NormalUVSet = -1;
-      }
-
-      if (g_allowEmissiveMaps && prim.emissiveTexture >= 0)
-      {
-        s_gltfFragInfo.u_EmissiveUVSet = 0;
-        vcShader_BindTexture(shader.pShader, pScene->ppTextures[prim.emissiveTexture], 0, shader.pEmissiveMapSampler);
-      }
-      else
-      {
-        s_gltfFragInfo.u_EmissiveUVSet = -1;
-      }
-
-      if (g_allowOcclusionMaps && prim.occlusionTexture >= 0)
-      {
-        s_gltfFragInfo.u_OcclusionUVSet = 0;
-        s_gltfFragInfo.u_OcclusionStrength = 1.f;
-        vcShader_BindTexture(shader.pShader, pScene->ppTextures[prim.occlusionTexture], 0, shader.pOcclusionMapSampler);
-      }
-      else
-      {
-        s_gltfFragInfo.u_OcclusionUVSet = -1;
-      }
-
       if (g_allowBaseColourMaps && prim.baseColorTexture >= 0)
       {
-        s_gltfFragInfo.u_BaseColorUVSet = 0;
+        s_gltfFragInfo.u_BaseColorUVSet = prim.baseColorUVSet;
         vcShader_BindTexture(shader.pShader, pScene->ppTextures[prim.baseColorTexture], 0, shader.pBaseColourSampler);
       }
       else
@@ -1132,12 +1151,43 @@ udResult vcGLTF_Render(vcGLTFScene *pScene, udRay<double> camera, udDouble4x4 wo
 
       if (g_allowMetalRoughMaps && prim.metallicRoughnessTexture >= 0)
       {
-        s_gltfFragInfo.u_MetallicRoughnessUVSet = 0;
+        s_gltfFragInfo.u_MetallicRoughnessUVSet = prim.metallicRoughnessUVSet;
         vcShader_BindTexture(shader.pShader, pScene->ppTextures[prim.metallicRoughnessTexture], 0, shader.pMetallicRoughnessSampler);
       }
       else
       {
         s_gltfFragInfo.u_MetallicRoughnessUVSet = -1;
+      }
+
+      if (g_allowNormalMaps && prim.normalTexture >= 0)
+      {
+        s_gltfFragInfo.u_NormalUVSet = prim.normalUVSet;
+        vcShader_BindTexture(shader.pShader, pScene->ppTextures[prim.normalTexture], 0, shader.pNormalMapSampler);
+      }
+      else
+      {
+        s_gltfFragInfo.u_NormalUVSet = -1;
+      }
+
+      if (g_allowEmissiveMaps && prim.emissiveTexture >= 0)
+      {
+        s_gltfFragInfo.u_EmissiveUVSet = prim.emissiveUVSet;
+        vcShader_BindTexture(shader.pShader, pScene->ppTextures[prim.emissiveTexture], 0, shader.pEmissiveMapSampler);
+      }
+      else
+      {
+        s_gltfFragInfo.u_EmissiveUVSet = -1;
+      }
+
+      if (g_allowOcclusionMaps && prim.occlusionTexture >= 0)
+      {
+        s_gltfFragInfo.u_OcclusionUVSet = prim.occlusionUVSet;
+        s_gltfFragInfo.u_OcclusionStrength = 1.f;
+        vcShader_BindTexture(shader.pShader, pScene->ppTextures[prim.occlusionTexture], 0, shader.pOcclusionMapSampler);
+      }
+      else
+      {
+        s_gltfFragInfo.u_OcclusionUVSet = -1;
       }
 
       vcShader_BindConstantBuffer(shader.pShader, shader.pFragUniformBuffer, &s_gltfFragInfo, sizeof(s_gltfFragInfo));

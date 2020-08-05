@@ -39,11 +39,7 @@ struct VS_INPUT
   float2 a_UV2 : TEXCOORD1;
 #endif
 
-#ifdef HAS_VERTEX_COLOR_float3
-  float3 a_Color : COLOR0;
-#endif
-
-#ifdef HAS_VERTEX_COLOR_float4
+#ifdef HAS_VERTEX_COLOR
   float4 a_Color : COLOR0;
 #endif
 
@@ -142,12 +138,8 @@ struct PS_INPUT
   float2 v_UVCoord1 : TEXCOORD0;
   float2 v_UVCoord2 : TEXCOORD1;
 
-#ifdef HAS_VERTEX_COLOR_float3
-  out float3 v_Color : COLOR0;
-#endif
-
-#ifdef HAS_VERTEX_COLOR_float4
-  out float4 v_Color : COLOR0;
+#ifdef HAS_VERTEX_COLOR
+  float4 v_Color : COLOR0;
 #endif
 };
 
@@ -357,7 +349,7 @@ PS_INPUT main(VS_INPUT input)
   output.v_UVCoord2 = input.a_UV2;
 #endif
 
-#if defined(HAS_VERTEX_COLOR_float3) || defined(HAS_VERTEX_COLOR_float4)
+#if defined(HAS_VERTEX_COLOR)
   output.v_Color = input.a_Color;
 #endif
 

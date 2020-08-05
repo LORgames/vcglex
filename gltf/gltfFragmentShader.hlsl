@@ -38,12 +38,8 @@ struct PS_INPUT
   float2 v_UVCoord1 : TEXCOORD0;
   float2 v_UVCoord2 : TEXCOORD1;
 
-#ifdef HAS_VERTEX_COLOR_float3
-  out float3 v_Color : COLOR0;
-#endif
-
-#ifdef HAS_VERTEX_COLOR_float4
-  out float4 v_Color : COLOR0;
+#ifdef HAS_VERTEX_COLOR
+  float4 v_Color : COLOR0;
 #endif
 };
 
@@ -700,10 +696,7 @@ float4 getVertexColor(PS_INPUT input)
 {
   float4 color = float4(1.0, 1.0, 1.0, 1.0);
 
-#ifdef HAS_VERTEX_COLOR_VEC3
-  color.rgb = input.v_Color;
-#endif
-#ifdef HAS_VERTEX_COLOR_VEC4
+#ifdef HAS_VERTEX_COLOR
   color = input.v_Color;
 #endif
 
