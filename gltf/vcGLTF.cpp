@@ -622,6 +622,7 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
     int indexAccessor = primitive.Get("indices").AsInt(-1);
     void *pIndexBuffer = nullptr;
     int32_t indexCount = 0;
+    bool indexCopy = false;
 
     if (indexAccessor != -1)
     {
@@ -638,10 +639,8 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
         int indexType = accessor.Get("componentType").AsInt();
         ptrdiff_t offset = accessor.Get("byteOffset").AsInt64() + root.Get("bufferViews[%d].byteOffset", accessor.Get("bufferView").AsInt(-1)).AsInt();
 
-        if (indexType == vcGLTFType_Int16 || indexType == vcGLTFType_UInt16)
+        if (indexType == vcGLTFType_Int16 || indexType == vcGLTFType_UInt16 || indexType == vcGLTFType_Int8 || indexType == vcGLTFType_UInt8)
           meshFlags = meshFlags | vcMF_IndexShort;
-        else if (indexType == vcGLTFType_Int8 || indexType == vcGLTFType_UInt8)
-          meshFlags = meshFlags | vcMF_IndexChar;
         else if (indexType != vcGLTFType_Int32 && indexType != vcGLTFType_Uint32)
           __debugbreak();
 
@@ -650,6 +649,15 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
 
         if (pScene->pBuffers[bufferID].pBytes != nullptr)
           pIndexBuffer = (pScene->pBuffers[bufferID].pBytes + offset);
+
+        if (indexType == vcGLTFType_Int8 || indexType == vcGLTFType_UInt8)
+        {
+          uint16_t *pNewIndexBuffer = udAllocType(uint16_t, indexCount, udAF_None);
+          for (int index = 0; index < indexCount; ++index)
+            pNewIndexBuffer[index] = ((uint8_t*)pIndexBuffer)[index];
+          indexCopy = true;
+          pIndexBuffer = pNewIndexBuffer;
+        }
       }
     }
 
@@ -780,19 +788,7 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
           }
           else
           {
-            if (meshFlags & vcMF_IndexChar)
-            {
-              uint8_t *pIndices = (uint8_t*)pIndexBuffer;
-              for (int indexIter = 0; indexIter < indexCount; ++indexIter)
-              {
-                if (pIndices[indexIter] == vi)
-                {
-                  int triangleStart = (indexIter / 3) * 3;
-                  normal = GetNormal(pIndices[triangleStart], pIndices[triangleStart + 1], pIndices[triangleStart + 2], pScene->pBuffers[bufferID].pBytes + byteOffset, byteStride);
-                }
-              }
-            }
-            else if (meshFlags & vcMF_IndexShort)
+            if (meshFlags & vcMF_IndexShort)
             {
               uint16_t *pIndices = (uint16_t*)pIndexBuffer;
               for (int indexIter = 0; indexIter < indexCount; ++indexIter)
@@ -932,6 +928,9 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
       vcMesh_Create(&pScene->pMeshes[meshID].pPrimitives[i].pMesh, pTypes, totalAttributes, pVertData, maxCount, pIndexBuffer, indexCount, meshFlags);
   
     udFree(pTypes);
+
+    if (indexCopy)
+      udFree(pIndexBuffer);
   }
 
 
