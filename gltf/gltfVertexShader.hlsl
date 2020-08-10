@@ -15,12 +15,15 @@ cbuffer u_EveryFrame : register(b0)
 #ifdef USE_MORPHING
   uniform float u_morphWeights[WEIGHT_COUNT];
 #endif
-
-#ifdef USE_SKINNING
-  float4x4 u_jointMatrix[JOINT_COUNT];
-  float4x4 u_jointNormalMatrix[JOINT_COUNT];
-#endif
 }
+
+#ifdef HAS_SKINNING
+cbuffer u_SkinningInfo : register(b1)
+{
+  float4x4 u_jointMatrix[72];
+  float4x4 u_jointNormalMatrix[72];
+}
+#endif
 
 struct VS_INPUT
 {
@@ -41,6 +44,16 @@ struct VS_INPUT
 
 #ifdef HAS_VERTEX_COLOR
   float4 a_Color : COLOR0;
+#endif
+
+#ifdef HAS_SKINNING
+  float4 a_Joints : BLENDINDICES0;
+  float4 a_Weights : BLENDWEIGHT0;
+#endif
+
+#ifdef HAS_SKINNING_EXTENDED
+  float4 a_JointsEx : BLENDINDICES1;
+  float4 a_WeightsEx : BLENDWEIGHT1;
 #endif
 
 #ifdef HAS_TARGET_POSITION0
@@ -106,22 +119,6 @@ struct VS_INPUT
 #ifdef HAS_TARGET_TANGENT3
   float3 a_Target_Tangent3;
 #endif
-
-#ifdef HAS_JOINT_SET1
-  float4 a_Joint1;
-#endif
-
-#ifdef HAS_JOINT_SET2
-  float4 a_Joint2;
-#endif
-
-#ifdef HAS_WEIGHT_SET1
-  float4 a_Weight1;
-#endif
-
-#ifdef HAS_WEIGHT_SET2
-  float4 a_Weight2;
-#endif
 };
 
 struct PS_INPUT
@@ -143,25 +140,23 @@ struct PS_INPUT
 #endif
 };
 
-#ifdef USE_SKINNING
+#ifdef HAS_SKINNING
 float4x4 getSkinningMatrix(VS_INPUT input)
 {
-    float4x4 sk= float4x4(0);
+  float4x4 skin = float4x4(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1);
 
-    #if defined(HAS_WEIGHT_SET1) && defined(HAS_JOINT_SET1)
-    sk+=
-        input.a_Weight1.x * u_jointMatrix[int(input.a_Joint1.x)] +
-        input.a_Weight1.y * u_jointMatrix[int(input.a_Joint1.y)] +
-        input.a_Weight1.z * u_jointMatrix[int(input.a_Joint1.z)] +
-        input.a_Weight1.w * u_jointMatrix[int(input.a_Joint1.w)];
-    #endif
+    skin +=
+        input.a_Weights.x * u_jointMatrix[int(input.a_Joints.x)] +
+        input.a_Weights.y * u_jointMatrix[int(input.a_Joints.y)] +
+        input.a_Weights.z * u_jointMatrix[int(input.a_Joints.z)] +
+        input.a_Weights.w * u_jointMatrix[int(input.a_Joints.w)];
 
-    #if defined(HAS_WEIGHT_SET2) && defined(HAS_JOINT_SET2)
-    sk+=
-        input.a_Weight2.x * u_jointMatrix[int(input.a_Joint2.x)] +
-        input.a_Weight2.y * u_jointMatrix[int(input.a_Joint2.y)] +
-        input.a_Weight2.z * u_jointMatrix[int(input.a_Joint2.z)] +
-        input.a_Weight2.w * u_jointMatrix[int(input.a_Joint2.w)];
+    #ifdef HAS_SKINNING_EXTENDED
+    skin +=
+        input.a_WeightsEx.x * u_jointMatrix[int(input.a_JointsEx.x)] +
+        input.a_WeightsEx.y * u_jointMatrix[int(input.a_JointsEx.y)] +
+        input.a_WeightsEx.z * u_jointMatrix[int(input.a_JointsEx.z)] +
+        input.a_WeightsEx.w * u_jointMatrix[int(input.a_JointsEx.w)];
     #endif
 
     return skin;
@@ -169,32 +164,30 @@ float4x4 getSkinningMatrix(VS_INPUT input)
 
 float4x4 getSkinningNormalMatrix(VS_INPUT input)
 {
-    float4x4 sk= float4x4(0);
+  float4x4 skin = float4x4(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1);
 
-    #if defined(HAS_WEIGHT_SET1) && defined(HAS_JOINT_SET1)
-    sk+=
-        input.a_Weight1.x * u_jointNormalMatrix[int(input.a_Joint1.x)] +
-        input.a_Weight1.y * u_jointNormalMatrix[int(input.a_Joint1.y)] +
-        input.a_Weight1.z * u_jointNormalMatrix[int(input.a_Joint1.z)] +
-        input.a_Weight1.w * u_jointNormalMatrix[int(input.a_Joint1.w)];
-    #endif
+  skin +=
+        input.a_Weights.x * u_jointNormalMatrix[int(input.a_Joints.x)] +
+        input.a_Weights.y * u_jointNormalMatrix[int(input.a_Joints.y)] +
+        input.a_Weights.z * u_jointNormalMatrix[int(input.a_Joints.z)] +
+        input.a_Weights.w * u_jointNormalMatrix[int(input.a_Joints.w)];
 
-    #if defined(HAS_WEIGHT_SET2) && defined(HAS_JOINT_SET2)
-    sk+=
-        input.a_Weight2.x * u_jointNormalMatrix[int(input.a_Joint2.x)] +
-        input.a_Weight2.y * u_jointNormalMatrix[int(input.a_Joint2.y)] +
-        input.a_Weight2.z * u_jointNormalMatrix[int(input.a_Joint2.z)] +
-        input.a_Weight2.w * u_jointNormalMatrix[int(input.a_Joint2.w)];
+    #ifdef HAS_SKINNING_EXTENDED
+  skin +=
+        input.a_WeightsEx.x * u_jointNormalMatrix[int(input.a_JointsEx.x)] +
+        input.a_WeightsEx.y * u_jointNormalMatrix[int(input.a_JointsEx.y)] +
+        input.a_WeightsEx.z * u_jointNormalMatrix[int(input.a_JointsEx.z)] +
+        input.a_WeightsEx.w * u_jointNormalMatrix[int(input.a_JointsEx.w)];
     #endif
 
     return skin;
 }
-#endif // !USE_SKINNING
+#endif // HAS_SKINNING
 
 #ifdef USE_MORPHING
 float4 getTargetPosition(VS_INPUT input)
 {
-    float4 pos = float4(0);
+    float4 pos = float4(0, 0, 0, 0);
 
 #ifdef HAS_TARGET_POSITION0
     pos.xyz += u_morphWeights[0] * input.a_Target_Position0;
@@ -221,7 +214,7 @@ float4 getTargetPosition(VS_INPUT input)
 
 float3 getTargetNormal(VS_INPUT input)
 {
-    float3 normal = float3(0);
+    float3 normal = float3(0, 0, 0);
 
 #ifdef HAS_TARGET_NORMAL0
     normal += u_morphWeights[0] * input.a_Target_Normal0;
@@ -248,7 +241,7 @@ float3 getTargetNormal(VS_INPUT input)
 
 float3 getTargetTangent(VS_INPUT input)
 {
-    float3 tangent = float3(0);
+    float3 tangent = float3(0, 0, 0);
 
 #ifdef HAS_TARGET_TANGENT0
     tangent += u_morphWeights[0] * input.a_Target_Tangent0;
@@ -283,8 +276,8 @@ float4 getPosition(VS_INPUT input)
     pos += getTargetPosition(input);
 #endif
 
-#ifdef USE_SKINNING
-    pos = getSkinningMatrix(input) * pos;
+#ifdef HAS_SKINNING
+    pos = mul(getSkinningMatrix(input), pos);
 #endif
 
     return pos;
@@ -298,8 +291,8 @@ float3 getNormal(VS_INPUT input)
     normal += getTargetNormal(input);
 #endif
 
-#ifdef USE_SKINNING
-    normal = float3x3(getSkinningNormalMatrix(input)) * normal;
+#ifdef HAS_SKINNING
+    normal = mul(getSkinningNormalMatrix(input), float4(normal, 0)).xyz;
 #endif
 
     return normalize(normal);
@@ -314,8 +307,8 @@ float3 getTangent(VS_INPUT input)
     tangent += getTargetTangent(input);
 #endif
 
-#ifdef USE_SKINNING
-    tangent = float3x3(getSkinningMatrix(input)) * tangent;
+#ifdef HAS_SKINNING
+    tangent = mul(getSkinningMatrix(input), float4(tangent, 0)).xyz;
 #endif
 
     return normalize(tangent);

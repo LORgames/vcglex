@@ -35,6 +35,7 @@ enum vcGLTFFeatures
   vcRSF_HasUVSet0,
   vcRSF_HasUVSet1,
   vcRSF_HasColour,
+  vcRSF_HasSkinning,
 
   vcRSF_Count
 };
@@ -47,19 +48,27 @@ enum vcGLTFFeatureBits
   vcRSB_UVSet0 = 1 << vcRSF_HasUVSet0,
   vcRSB_UVSet1 = 1 << vcRSF_HasUVSet1,
   vcRSB_Colour = 1 << vcRSF_HasColour,
+  vcRSB_Skinned = 1 << vcRSF_HasSkinning,
 
   vcRSB_Count = 1 << vcRSF_Count
 };
 
 struct vcGLTFNode
 {
-  udDouble4x4 matrix;
+  udFloat3 translation;
+  udFloatQuat rotation;
+  udFloat3 scale;
+
+  udFloat4x4 GetMat()
+  {
+    return udFloat4x4::rotationQuat(rotation, translation) * udFloat4x4::scaleNonUniform(scale);
+  }
 };
 
 struct vcGLTFMeshInstance
 {
   int meshID;
-  udDouble4x4 matrix;
+  udFloat4x4 matrix;
 };
 
 enum vcGLTF_AlphaMode
@@ -83,7 +92,7 @@ struct vcGLTFMeshPrimitive
   int metallicRoughnessTexture;
   int metallicRoughnessUVSet;
 
-  double normalScale;
+  float normalScale;
   int normalTexture;
   int normalUVSet;
 
@@ -115,8 +124,10 @@ struct vcGLTFScene
 {
   char *pPath;
 
-  udChunkedArray<vcGLTFNode> nodes;
   udChunkedArray<vcGLTFMeshInstance> meshInstances;
+
+  int nodeCount;
+  vcGLTFNode *pNodes;
 
   int bufferCount;
   vcGLTFBuffer *pBuffers;
@@ -132,6 +143,7 @@ struct vcGLTFShader
 {
   vcShader* pShader;
   vcShaderConstantBuffer *pVertUniformBuffer;
+  vcShaderConstantBuffer *pSkinningUniformBuffer;
   vcShaderConstantBuffer *pFragUniformBuffer;
 
   vcShaderSampler *pBaseColourSampler;
@@ -160,6 +172,12 @@ struct vcGLTFVertInputs
   float4x4 u_jointNormalMatrix[JOINT_COUNT];
 #endif
 } s_gltfVertInfo = {};
+
+struct vcGLTFVertSkinned
+{
+  udFloat4x4 u_jointMatrix[72];
+  udFloat4x4 u_jointNormalMatrix[72];
+} s_gltfVertSkinningInfo = {};
 
 #define MATERIAL_METALLICROUGHNESS
 #define USE_PUNCTUAL
@@ -404,22 +422,27 @@ void vcGLTF_GenerateGlobalShaders()
   struct TypeStuff
   {
     const char *pDefine;
-    vcVertexLayoutTypes layoutType;
+    vcVertexLayoutTypes layoutType0;
+    vcVertexLayoutTypes layoutType1;
   };
 
   TypeStuff types[vcRSF_Count] = {};
 
   types[vcRSF_HasTangents].pDefine = "HAS_TANGENTS";
-  types[vcRSF_HasTangents].layoutType = vcVLT_Tangent4;
+  types[vcRSF_HasTangents].layoutType0 = vcVLT_Tangent4;
 
   types[vcRSF_HasUVSet0].pDefine = "HAS_UV_SET1";
-  types[vcRSF_HasUVSet0].layoutType = vcVLT_TextureCoords2_0;
+  types[vcRSF_HasUVSet0].layoutType0 = vcVLT_TextureCoords2_0;
 
   types[vcRSF_HasUVSet1].pDefine = "HAS_UV_SET2";
-  types[vcRSF_HasUVSet1].layoutType = vcVLT_TextureCoords2_1;
+  types[vcRSF_HasUVSet1].layoutType0 = vcVLT_TextureCoords2_1;
 
   types[vcRSF_HasColour].pDefine = "HAS_VERTEX_COLOR";
-  types[vcRSF_HasColour].layoutType = vcVLT_ColourBGRA;
+  types[vcRSF_HasColour].layoutType0 = vcVLT_ColourBGRA;
+
+  types[vcRSF_HasSkinning].pDefine = "HAS_SKINNING";
+  types[vcRSF_HasSkinning].layoutType0 = vcVLT_BoneIDs;
+  types[vcRSF_HasSkinning].layoutType1 = vcVLT_BoneWeights;
 
   const int RequiredDefines = 2;
   const char* defines[RequiredDefines + vcRSF_Count] = {};
@@ -427,32 +450,47 @@ void vcGLTF_GenerateGlobalShaders()
   defines[1] = "USE_PUNCTUAL";
 
   const int RequiredVertTypes = 2;
-  vcVertexLayoutTypes vltList[RequiredVertTypes + vcRSF_Count] = {};
+  vcVertexLayoutTypes vltList[RequiredVertTypes + (vcRSF_Count*2)] = {};
   vltList[0] = vcVLT_Position3;
   vltList[1] = vcVLT_Normal3;
+
+  const char *pVertShaderSource = nullptr;
+  const char *pFragShaderSource = nullptr;
+
+  vcShader_LoadTextFromFile("asset://assets/shaders/gltfVertexShader", &pVertShaderSource, vcGLSamplerShaderStage_Vertex);
+  vcShader_LoadTextFromFile("asset://assets/shaders/gltfFragmentShader", &pFragShaderSource, vcGLSamplerShaderStage_Fragment);
 
   for (int i = 0; i < vcRSB_Count; ++i)
   {
     if ((i & (vcRSB_UVSet0 | vcRSB_UVSet1)) == vcRSB_UVSet1)
       continue;
 
-    int extraCount = 0;
+    int extraDefines = 0;
+    int extraLayouts = 0;
     for (int j = 0; j < vcRSF_Count; ++j)
     {
       if (i & (1 << j))
       {
-        defines[RequiredDefines + extraCount] = types[j].pDefine;
-        vltList[RequiredVertTypes + extraCount] = types[j].layoutType;
+        defines[RequiredDefines + extraDefines] = types[j].pDefine;
+        vltList[RequiredVertTypes + extraLayouts] = types[j].layoutType0;
+        
+        ++extraDefines;
+        ++extraLayouts;
 
-        ++extraCount;
+        if (types[j].layoutType1 != vcVLT_Unsupported)
+        {
+          vltList[RequiredVertTypes + extraLayouts] = types[j].layoutType1;
+          ++extraLayouts;
+        }
       }
     }
 
-    vcLayout_Sort(&vltList[RequiredVertTypes], extraCount);
+    vcLayout_Sort(&vltList[RequiredVertTypes], extraLayouts);
 
-    vcShader_CreateFromFile(&g_shaderTypes[i].pShader, "asset://assets/shaders/gltfVertexShader", "asset://assets/shaders/gltfFragmentShader", vltList, RequiredVertTypes+extraCount, defines, RequiredDefines + extraCount);
+    vcShader_CreateFromText(&g_shaderTypes[i].pShader, pVertShaderSource, pFragShaderSource, vltList, RequiredVertTypes + extraLayouts, "gltfVertexShader", "gltfFragmentShader", defines, RequiredDefines + extraDefines);
 
     vcShader_GetConstantBuffer(&g_shaderTypes[i].pVertUniformBuffer, g_shaderTypes[i].pShader, "u_EveryFrame", sizeof(s_gltfVertInfo));
+    vcShader_GetConstantBuffer(&g_shaderTypes[i].pSkinningUniformBuffer, g_shaderTypes[i].pShader, "u_SkinningInfo", sizeof(s_gltfVertSkinningInfo));
     vcShader_GetConstantBuffer(&g_shaderTypes[i].pFragUniformBuffer, g_shaderTypes[i].pShader, "u_FragSettings", sizeof(s_gltfFragInfo));
 
     vcShader_GetSamplerIndex(&g_shaderTypes[i].pBaseColourSampler, g_shaderTypes[i].pShader, "u_BaseColorSampler");
@@ -461,6 +499,9 @@ void vcGLTF_GenerateGlobalShaders()
     vcShader_GetSamplerIndex(&g_shaderTypes[i].pEmissiveMapSampler, g_shaderTypes[i].pShader, "u_EmissiveSampler");
     vcShader_GetSamplerIndex(&g_shaderTypes[i].pOcclusionMapSampler, g_shaderTypes[i].pShader, "u_OcclusionSampler");
   }
+
+  udFree(pVertShaderSource);
+  udFree(pFragShaderSource);
 }
 
 void vcGLTF_DestroyGlobalShaders()
@@ -586,7 +627,7 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
       if (pScene->pMeshes[meshID].pPrimitives[i].metallicRoughnessTexture != -1)
         vcGLTF_LoadTexture(pScene, root, pScene->pMeshes[meshID].pPrimitives[i].metallicRoughnessTexture);
 
-      pScene->pMeshes[meshID].pPrimitives[i].normalScale = root.Get("materials[%d].normalTexture.scale", material).AsDouble(1.0);
+      pScene->pMeshes[meshID].pPrimitives[i].normalScale = root.Get("materials[%d].normalTexture.scale", material).AsFloat(1.f);
       pScene->pMeshes[meshID].pPrimitives[i].normalTexture = root.Get("materials[%d].normalTexture.index", material).AsInt(-1);
       pScene->pMeshes[meshID].pPrimitives[i].normalUVSet = root.Get("materials[%d].normalTexture.texCoord", material).AsInt(0);
       if (pScene->pMeshes[meshID].pPrimitives[i].normalTexture != -1)
@@ -682,6 +723,8 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
       { "TEXCOORD_1", "VEC2", vcVLT_TextureCoords2_1, vcRSB_UVSet1 },
       { "COLOR_0", "VEC3", vcVLT_ColourBGRA, vcRSB_Colour },
       { "COLOR_0", "VEC4", vcVLT_ColourBGRA, vcRSB_Colour },
+      { "JOINTS_0", "VEC4", vcVLT_BoneIDs, vcRSB_Skinned },
+      { "WEIGHTS_0", "VEC4", vcVLT_BoneWeights, vcRSB_Skinned },
     };
 
     for (size_t j = 0; j < totalAttributes; ++j)
@@ -707,9 +750,6 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
       else if (maxCount != attributeCount)
         __debugbreak();
 
-      if (attributeType != vcGLTFType_F32)
-        __debugbreak();
-
       pTypes[j] = vcVLT_Unsupported;
 
       for (size_t stIter = 0; stIter < udLengthOf(supportedTypes); ++stIter)
@@ -721,6 +761,9 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
           break;
         }
       }
+
+      if ((pTypes[j] == vcVLT_BoneIDs && attributeType != vcGLTFType_UInt16) || (pTypes[j] != vcVLT_BoneIDs && attributeType != vcGLTFType_F32))
+        __debugbreak();
 
       if (pTypes[j] == vcVLT_Normal3)
         hasNormals = true;
@@ -858,6 +901,11 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
             count = 4;
           totalOffset += sizeof(uint32_t);
         }
+        else if (pTypes[ai] == vcVLT_BoneIDs)
+        {
+          count = 4;
+          totalOffset += sizeof(uint32_t);
+        }
         else if (udStrEqual(pAccessorType, "VEC3"))
         {
           count = 3;
@@ -901,6 +949,16 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
             pVertI32[0] = temp;
           }
         }
+        else if (pTypes[ai] == vcVLT_BoneIDs)
+        {
+          for (int vi = 0; vi < maxCount; ++vi)
+          {
+            uint16_t *pIDs = (uint16_t*)(pScene->pBuffers[bufferID].pBytes + byteOffset + vi * byteStride);
+            uint32_t *pVertI32 = (uint32_t*)(pVertData + vertexStride * vi + offset);
+
+            *pVertI32 = ((pIDs[0] & 0xFF) << 24) | ((pIDs[1] & 0xFF) << 16) | ((pIDs[2] & 0xFF) << 8) | ((pIDs[3] & 0xFF) << 0);
+          }
+        }
         else
         {
           for (int vi = 0; vi < maxCount; ++vi)
@@ -928,6 +986,7 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
       vcMesh_Create(&pScene->pMeshes[meshID].pPrimitives[i].pMesh, pTypes, totalAttributes, pVertData, maxCount, pIndexBuffer, indexCount, meshFlags);
   
     udFree(pTypes);
+    udFree(pVertData);
 
     if (indexCopy)
       udFree(pIndexBuffer);
@@ -937,24 +996,24 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
   return udR_Success;
 }
 
-udResult vcGLTF_ProcessChildNode(vcGLTFScene *pScene, const udJSON &root, const udJSON &child, udDouble4x4 parentMatrix)
+udResult vcGLTF_ProcessChildNode(vcGLTFScene *pScene, const udJSON &root, const udJSON &child, udFloat4x4 parentMatrix)
 {
-  udDouble4x4 childMatrix = udDouble4x4::identity();
+  udFloat4x4 childMatrix = udFloat4x4::identity();
   
   if (child.Get("matrix").IsArray())
   {
-    childMatrix = child.Get("matrix").AsDouble4x4();
+    childMatrix = udFloat4x4::create(child.Get("matrix").AsDouble4x4());
   }
   else
   {
-    udDouble3 translation = child.Get("translation").AsDouble3();
-    udDoubleQuat rotation = child.Get("rotation").AsQuaternion();
-    udDouble3 scale = child.Get("scale").AsDouble3(udDouble3::one());
+    udFloat3 translation = child.Get("translation").AsFloat3();
+    udFloatQuat rotation = udFloatQuat::create(child.Get("rotation").AsQuaternion());
+    udFloat3 scale = child.Get("scale").AsFloat3(udFloat3::one());
     
-    childMatrix = udDouble4x4::rotationQuat(rotation, translation) * udDouble4x4::scaleNonUniform(scale);
+    childMatrix = udFloat4x4::rotationQuat(rotation, translation) * udFloat4x4::scaleNonUniform(scale);
   }
 
-  udDouble4x4 chainedMatrix = parentMatrix * childMatrix;
+  udFloat4x4 chainedMatrix = parentMatrix * childMatrix;
 
   if (!child.Get("mesh").IsVoid())
   {
@@ -998,7 +1057,6 @@ udResult vcGLTF_Load(vcGLTFScene **ppScene, const char *pFilename, udWorkerPool 
   udResult result = udR_Failure_;
   
   vcGLTFScene *pScene = udAllocType(vcGLTFScene, 1, udAF_Zero);
-  pScene->nodes.Init(32);
   pScene->meshInstances.Init(8);
 
   char *pData = nullptr;
@@ -1012,10 +1070,14 @@ udResult vcGLTF_Load(vcGLTFScene **ppScene, const char *pFilename, udWorkerPool 
 
   UD_ERROR_CHECK(udFile_Load(pFilename, &pData));
   UD_ERROR_CHECK(gltfData.Parse(pData));
+  udFree(pData);
 
   pathLen = path.ExtractFolder(nullptr, 0);
   pScene->pPath = udAllocType(char, pathLen + 1, udAF_Zero);
   path.ExtractFolder(pScene->pPath, pathLen + 1);
+
+  pScene->nodeCount = (int)gltfData.Get("nodes").ArrayLength();
+  pScene->pNodes = udAllocType(vcGLTFNode, pScene->nodeCount, udAF_Zero);
 
   pScene->bufferCount = (int)gltfData.Get("buffers").ArrayLength();
   pScene->pBuffers = udAllocType(vcGLTFBuffer, pScene->bufferCount, udAF_Zero);
@@ -1030,7 +1092,7 @@ udResult vcGLTF_Load(vcGLTFScene **ppScene, const char *pFilename, udWorkerPool 
   pSceneNodes = gltfData.Get("scenes[%d].nodes", baseScene).AsArray();
   for (size_t i = 0; i < pSceneNodes->length; ++i)
   {
-    vcGLTF_ProcessChildNode(pScene, gltfData, gltfData.Get("nodes[%d]", pSceneNodes->GetElement(i)->AsInt()), udDouble4x4::identity());
+    vcGLTF_ProcessChildNode(pScene, gltfData, gltfData.Get("nodes[%d]", pSceneNodes->GetElement(i)->AsInt()), udFloat4x4::identity());
   }
 
   result = udR_Success;
@@ -1057,16 +1119,25 @@ void vcGLTF_Destroy(vcGLTFScene **ppScene)
   for (int i = 0; i < pScene->meshCount; ++i)
   {
     for (int j = 0; j < pScene->pMeshes[i].numPrimitives; ++j)
-    {
       vcMesh_Destroy(&pScene->pMeshes[i].pPrimitives[j].pMesh);
-    }
-  }
 
-  udFree(pScene->pBuffers);
-  pScene->meshInstances.Deinit();
-  pScene->nodes.Deinit();
+    udFree(pScene->pMeshes[i].pPrimitives);
+  }
   udFree(pScene->pMeshes);
+
+  for (int i = 0; i < pScene->bufferCount; ++i)
+    udFree(pScene->pBuffers[i].pBytes);
+  udFree(pScene->pBuffers);
+
+  pScene->meshInstances.Deinit();
+
+  udFree(pScene->pNodes);
+
+  for (int i = 0; i < pScene->textureCount; ++i)
+    vcTexture_Destroy(&pScene->ppTextures[i]);
   udFree(pScene->ppTextures);
+
+  udFree(pScene->pPath);
 
   udFree(pScene);
 }
@@ -1081,11 +1152,17 @@ udResult vcGLTF_Render(vcGLTFScene *pScene, udRay<double> camera, udDouble4x4 wo
 {
   int bound = -1;
 
-  udDouble4x4 SpaceChange = { 1, 0, 0, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1 };
+  udFloat4x4 SpaceChange = { 1, 0, 0, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1 };
+
+  for (int i = 0; i < 72; ++i)
+  {
+    s_gltfVertSkinningInfo.u_jointMatrix[i] = udFloat4x4::identity();
+    s_gltfVertSkinningInfo.u_jointNormalMatrix[i] = udFloat4x4::identity();
+  }
 
   for (size_t i = 0; i < pScene->meshInstances.length; ++i)
   {
-    s_gltfVertInfo.u_ModelMatrix = udFloat4x4::create(worldMatrix * SpaceChange * pScene->meshInstances[i].matrix);
+    s_gltfVertInfo.u_ModelMatrix = udFloat4x4::create(worldMatrix) * SpaceChange * pScene->meshInstances[i].matrix;
     s_gltfVertInfo.u_ViewProjectionMatrix = udFloat4x4::create(projectionMatrix * viewMatrix);
     s_gltfVertInfo.u_NormalMatrix = udTranspose(udInverse(s_gltfVertInfo.u_ModelMatrix));
 
