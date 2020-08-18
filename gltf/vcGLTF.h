@@ -13,6 +13,14 @@ void vcGLTF_Destroy(vcGLTFScene **ppScene);
 void vcGLTF_GenerateGlobalShaders();
 void vcGLTF_DestroyGlobalShaders();
 
-udResult vcGLTF_Render(vcGLTFScene *ppScene, udRay<double> camera, udDouble4x4 worldMatrix, udDouble4x4 viewMatrix, udDouble4x4 projectionMatrix);
+enum vcGLTFRenderPass
+{
+  vcGLTFRP_Opaque,
+  vcGLTFRP_Transparent,
+
+  vcGLTFRP_Shadows,
+};
+
+udResult vcGLTF_Render(vcGLTFScene *ppScene, udRay<double> camera, udDouble4x4 worldMatrix, udDouble4x4 viewMatrix, udDouble4x4 projectionMatrix, vcGLTFRenderPass pass);
 
 #endif //vcGLTF_h__

@@ -299,11 +299,21 @@ cbuffer u_FragSettings : register(b0)
 #endif
 }
 
+sampler normalSampler;
 Texture2D u_NormalSampler;
+
+sampler emissiveSampler;
 Texture2D u_EmissiveSampler;
+
+sampler occlusionSampler;
 Texture2D u_OcclusionSampler;
+
+sampler baseColorSampler;
 Texture2D u_BaseColorSampler;
+
+sampler metallicRoughnessSampler;
 Texture2D u_MetallicRoughnessSampler;
+
 Texture2D u_DiffuseSampler;
 Texture2D u_SpecularGlossinessSampler;
 TextureCube u_LambertianEnvSampler;
@@ -1085,7 +1095,7 @@ NormalInfo getNormalInfo(PS_INPUT input, float3 v)
   // Compute pertubed normals:
   if (u_NormalUVSet >= 0)
   {
-    n = u_NormalSampler.Sample(MeshTextureSampler, UV).rgb * 2.0 - 1.0;
+    n = u_NormalSampler.Sample(normalSampler, UV).rgb * 2.0 - 1.0;
     n = n * float3(u_NormalScale, u_NormalScale, 1.0);
     n = mul(normalize(n), float3x3(t, b, ng));
   }
@@ -1117,7 +1127,7 @@ float4 getBaseColor(PS_INPUT input)
   baseColor *= sRGBToLinear(u_DiffuseSampler.Sample(MeshTextureSampler, getDiffuseUV(input)));
 #elif defined(MATERIAL_METALLICROUGHNESS)
   if (u_BaseColorUVSet >= 0)
-    baseColor *= sRGBToLinear(u_BaseColorSampler.Sample(MeshTextureSampler, getBaseColorUV(input)));
+    baseColor *= sRGBToLinear(u_BaseColorSampler.Sample(baseColorSampler, getBaseColorUV(input)));
 #endif
 
   return baseColor * getVertexColor(input);
@@ -1166,7 +1176,7 @@ MaterialInfo getMetallicRoughnessInfo(PS_INPUT input, MaterialInfo info, float f
   {
     // Roughness is stored in the 'g' channel, metallic is stored in the 'b' channel.
     // This layout intentionally reserves the 'r' channel for (optional) occlusion map data
-    float4 mrSample = u_MetallicRoughnessSampler.Sample(MeshTextureSampler, getMetallicRoughnessUV(input));
+    float4 mrSample = u_MetallicRoughnessSampler.Sample(metallicRoughnessSampler, getMetallicRoughnessUV(input));
     info.perceptualRoughness *= mrSample.g;
     info.metallic *= mrSample.b;
   }
@@ -1539,7 +1549,7 @@ PS_OUTPUT main(PS_INPUT input)
   f_emissive = u_EmissiveFactor;
 
   if (u_EmissiveUVSet >= 0)
-    f_emissive *= sRGBToLinear(u_EmissiveSampler.Sample(MeshTextureSampler, getEmissiveUV(input))).rgb;
+    f_emissive *= sRGBToLinear(u_EmissiveSampler.Sample(emissiveSampler, getEmissiveUV(input))).rgb;
 
   float3 color = float3(0.0, 0.0, 0.0);
 
@@ -1571,7 +1581,7 @@ PS_OUTPUT main(PS_INPUT input)
   // Apply optional PBR terms for additional (optional) shading
   if (u_OcclusionUVSet >= 0)
   {
-    ao = u_OcclusionSampler.Sample(MeshTextureSampler, getOcclusionUV(input)).r;
+    ao = u_OcclusionSampler.Sample(occlusionSampler, getOcclusionUV(input)).r;
     color = lerp(color, color * ao, u_OcclusionStrength);
   }
 

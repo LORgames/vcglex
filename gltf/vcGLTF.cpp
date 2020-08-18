@@ -563,15 +563,22 @@ void vcGLTF_LoadTexture(vcGLTFScene *pScene, const udJSON &root, int textureID)
     int wrapS = root.Get("samplers[%d].wrapS", sampler).AsInt(vcGLTFType_Nearest);
     int wrapT = root.Get("samplers[%d].wrapT", sampler).AsInt(vcGLTFType_Nearest);
 
-    if (wrapS != wrapT)
-      __debugbreak();
-
     if (wrapS == vcGLTFType_ClampEdge)
       wrapMode = vcTWM_Clamp;
     else if (wrapS == vcGLTFType_MirroredRepeat)
       wrapMode = vcTWM_MirroredRepeat;
     else
       wrapMode = vcTWM_Repeat;
+
+    if (wrapS != wrapT)
+    {
+      if (wrapT == vcGLTFType_ClampEdge)
+        wrapMode = wrapMode | vcTWM_ClampT | vcTWM_UniqueST;
+      else if (wrapT == vcGLTFType_MirroredRepeat)
+        wrapMode = wrapMode | vcTWM_MirroredRepeatT | vcTWM_UniqueST;
+      else
+        wrapMode = wrapMode | vcTWM_RepeatT | vcTWM_UniqueST;
+    }
 
     if (udStrBeginsWith(pURI, "data:"))
       vcTexture_CreateFromFilename(&pScene->ppTextures[textureID], pURI, nullptr, nullptr, filterMode, false, wrapMode);
@@ -1156,7 +1163,7 @@ void vcGLTF_Destroy(vcGLTFScene **ppScene)
   udFree(pScene);
 }
 
-udResult vcGLTF_Render(vcGLTFScene *pScene, udRay<double> camera, udDouble4x4 worldMatrix, udDouble4x4 viewMatrix, udDouble4x4 projectionMatrix)
+udResult vcGLTF_Render(vcGLTFScene *pScene, udRay<double> camera, udDouble4x4 worldMatrix, udDouble4x4 viewMatrix, udDouble4x4 projectionMatrix, vcGLTFRenderPass pass)
 {
   int bound = -1;
 
@@ -1197,6 +1204,9 @@ udResult vcGLTF_Render(vcGLTFScene *pScene, udRay<double> camera, udDouble4x4 wo
     {
       const vcGLTFMeshPrimitive &prim = pScene->pMeshes[pScene->meshInstances[i].meshID].pPrimitives[j];
       const vcGLTFShader &shader = g_shaderTypes[prim.features];
+
+      if ((prim.alpaMode == vcGLTFAM_Blend && pass != vcGLTFRP_Transparent) || (prim.alpaMode != vcGLTFAM_Blend && pass == vcGLTFRP_Transparent))
+        continue;
 
       if (bound != prim.features)
       {
