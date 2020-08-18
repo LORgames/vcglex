@@ -1156,12 +1156,6 @@ void vcGLTF_Destroy(vcGLTFScene **ppScene)
   udFree(pScene);
 }
 
-bool g_allowBaseColourMaps = true;
-bool g_allowNormalMaps = true;
-bool g_allowMetalRoughMaps = true;
-bool g_allowEmissiveMaps = true;
-bool g_allowOcclusionMaps = true;
-
 udResult vcGLTF_Render(vcGLTFScene *pScene, udRay<double> camera, udDouble4x4 worldMatrix, udDouble4x4 viewMatrix, udDouble4x4 projectionMatrix)
 {
   int bound = -1;
@@ -1229,7 +1223,7 @@ udResult vcGLTF_Render(vcGLTFScene *pScene, udRay<double> camera, udDouble4x4 wo
       else
         vcGLState_SetBlendMode(vcGLSBM_None);
 
-      if (g_allowBaseColourMaps && prim.baseColorTexture >= 0)
+      if (prim.baseColorTexture >= 0)
       {
         s_gltfFragInfo.u_BaseColorUVSet = prim.baseColorUVSet;
         vcShader_BindTexture(shader.pShader, pScene->ppTextures[prim.baseColorTexture], 0, shader.pBaseColourSampler);
@@ -1239,7 +1233,7 @@ udResult vcGLTF_Render(vcGLTFScene *pScene, udRay<double> camera, udDouble4x4 wo
         s_gltfFragInfo.u_BaseColorUVSet = -1;
       }
 
-      if (g_allowMetalRoughMaps && prim.metallicRoughnessTexture >= 0)
+      if (prim.metallicRoughnessTexture >= 0)
       {
         s_gltfFragInfo.u_MetallicRoughnessUVSet = prim.metallicRoughnessUVSet;
         vcShader_BindTexture(shader.pShader, pScene->ppTextures[prim.metallicRoughnessTexture], 0, shader.pMetallicRoughnessSampler);
@@ -1249,7 +1243,7 @@ udResult vcGLTF_Render(vcGLTFScene *pScene, udRay<double> camera, udDouble4x4 wo
         s_gltfFragInfo.u_MetallicRoughnessUVSet = -1;
       }
 
-      if (g_allowNormalMaps && prim.normalTexture >= 0)
+      if (prim.normalTexture >= 0)
       {
         s_gltfFragInfo.u_NormalUVSet = prim.normalUVSet;
         vcShader_BindTexture(shader.pShader, pScene->ppTextures[prim.normalTexture], 0, shader.pNormalMapSampler);
@@ -1259,7 +1253,7 @@ udResult vcGLTF_Render(vcGLTFScene *pScene, udRay<double> camera, udDouble4x4 wo
         s_gltfFragInfo.u_NormalUVSet = -1;
       }
 
-      if (g_allowEmissiveMaps && prim.emissiveTexture >= 0)
+      if (prim.emissiveTexture >= 0)
       {
         s_gltfFragInfo.u_EmissiveUVSet = prim.emissiveUVSet;
         vcShader_BindTexture(shader.pShader, pScene->ppTextures[prim.emissiveTexture], 0, shader.pEmissiveMapSampler);
@@ -1269,7 +1263,7 @@ udResult vcGLTF_Render(vcGLTFScene *pScene, udRay<double> camera, udDouble4x4 wo
         s_gltfFragInfo.u_EmissiveUVSet = -1;
       }
 
-      if (g_allowOcclusionMaps && prim.occlusionTexture >= 0)
+      if (prim.occlusionTexture >= 0)
       {
         s_gltfFragInfo.u_OcclusionUVSet = prim.occlusionUVSet;
         s_gltfFragInfo.u_OcclusionStrength = 1.f;
