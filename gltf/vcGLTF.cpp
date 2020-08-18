@@ -10,6 +10,12 @@
 #include "udFile.h"
 #include "udStringUtil.h"
 
+#define USE_TEXTURE_CACHE 1
+
+#if USE_TEXTURE_CACHE
+#include "caching/ttTextureCache.h"
+#endif
+
 enum vcGLTFTypes
 {
   vcGLTFType_Int8 = 5120,
@@ -570,7 +576,11 @@ void vcGLTF_LoadTexture(vcGLTFScene *pScene, const udJSON &root, int textureID)
     if (udStrBeginsWith(pURI, "data:"))
       vcTexture_CreateFromFilename(&pScene->ppTextures[textureID], pURI, nullptr, nullptr, filterMode, false, wrapMode);
     else if (pURI != nullptr)
+#if USE_TEXTURE_CACHE
+      pScene->ppTextures[textureID] = ttTextureCache_Get(udTempStr("%s/%s", pScene->pPath, pURI), filterMode, false, wrapMode);
+#else
       vcTexture_CreateFromFilename(&pScene->ppTextures[textureID], udTempStr("%s/%s", pScene->pPath, pURI), nullptr, nullptr, filterMode, false, wrapMode);
+#endif
   }
 }
 
@@ -1134,7 +1144,11 @@ void vcGLTF_Destroy(vcGLTFScene **ppScene)
   udFree(pScene->pNodes);
 
   for (int i = 0; i < pScene->textureCount; ++i)
+#if USE_TEXTURE_CACHE
+    ttTextureCache_Release(&pScene->ppTextures[i]);
+#else
     vcTexture_Destroy(&pScene->ppTextures[i]);
+#endif
   udFree(pScene->ppTextures);
 
   udFree(pScene->pPath);
