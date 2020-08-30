@@ -159,10 +159,6 @@ struct vcGLTFShader
   vcShaderSampler *pOcclusionMapSampler;
 } g_shaderTypes[vcRSB_Count] = {};
 
-#ifndef LIGHT_COUNT
-# define LIGHT_COUNT 2
-#endif
-
 struct vcGLTFVertInputs
 {
   udFloat4x4 u_ViewProjectionMatrix;
@@ -185,27 +181,6 @@ struct vcGLTFVertSkinned
   udFloat4x4 u_jointNormalMatrix[72];
 } s_gltfVertSkinningInfo = {};
 
-#define MATERIAL_METALLICROUGHNESS
-#define USE_PUNCTUAL
-
-struct Light
-{
-  udFloat3 direction;
-  float range;
-
-  udFloat3 color;
-  float intensity;
-
-  udFloat3 position;
-
-  float innerConeCos;
-  float outerConeCos;
-
-  int type;
-
-  udFloat2 padding;
-};
-
 struct vcGLTFVertFragSettings
 {
   udFloat3 u_Camera;
@@ -215,53 +190,11 @@ struct vcGLTFVertFragSettings
   float u_NormalScale; // Only used with HAS_NORMALS but serves as padding otherwise
 
   // Metallic Roughness
-#ifdef MATERIAL_METALLICROUGHNESS
   udFloat4 u_BaseColorFactor;
   float u_MetallicFactor;
   float u_RoughnessFactor;
-  int u_BaseColorUVSet; // Only needed with HAS_BASE_COLOR_MAP
-  int u_MetallicRoughnessUVSet; // Only needed with HAS_METALLIC_ROUGHNESS_MAP
-
-# ifdef HAS_BASECOLOR_UV_TRANSFORM
-  float3x3 u_BaseColorUVTransform;
-# endif
-
-# ifdef HAS_METALLICROUGHNESS_UV_TRANSFORM
-  float3x3 u_MetallicRoughnessUVTransform;
-# endif
-#endif
-
-  // Specular Glossiness
-#ifdef MATERIAL_SPECULARGLOSSINESS
-  float u_GlossinessFactor;
-  float3 u_SpecularFactor;
-  float4 u_DiffuseFactor;
-
-#ifdef HAS_DIFFUSE_MAP
-  int u_DiffuseUVSet;
-#ifdef HAS_DIFFUSE_UV_TRANSFORM
-  float3x3 u_DiffuseUVTransform;
-#endif
-#endif
-
-#ifdef HAS_SPECULAR_GLOSSINESS_MAP
-  int u_SpecularGlossinessUVSet;
-#ifdef HAS_SPECULARGLOSSINESS_UV_TRANSFORM
-  float3x3 u_SpecularGlossinessUVTransform;
-#endif
-#endif
-#endif
-
-  // Specular / Metalic Override
-#ifdef MATERIAL_METALLICROUGHNESS_SPECULAROVERRIDE
-  float u_MetallicRoughnessSpecularFactor;
-#ifdef HAS_METALLICROUGHNESS_SPECULAROVERRIDE_MAP
-  int u_MetallicRougnessSpecularTextureUVSet;
-#ifdef HAS_METALLICROUGHNESSSPECULAR_UV_TRANSFORM
-  float3x3 u_MetallicRougnessSpecularUVTransform;
-#endif
-#endif
-#endif
+  int u_BaseColorUVSet;
+  int u_MetallicRoughnessUVSet;
 
   // General Material
   int u_NormalUVSet;
@@ -274,150 +207,6 @@ struct vcGLTFVertFragSettings
   float u_AlphaCutoff;
 
   udFloat2 __padding;
-
-# ifdef HAS_NORMAL_UV_TRANSFORM
-  float3x3 u_NormalUVTransform;
-# endif
-
-# ifdef HAS_EMISSIVE_UV_TRANSFORM
-  float3x3 u_EmissiveUVTransform;
-# endif
-
-# ifdef HAS_OCCLUSION_UV_TRANSFORM
-  float3x3 u_OcclusionUVTransform;
-# endif
-
-#ifdef USE_PUNCTUAL
-  Light u_Lights[LIGHT_COUNT];
-#endif
-
-#ifdef USE_UBL
-  // IBL
-  int u_MipCount;
-#endif
-
-  // Sheen
-#ifdef MATERIAL_SHEEN
-  float u_SheenIntensityFactor;
-  float3 u_SheenColorFactor;
-  float u_SheenRoughness;
-
-#ifdef HAS_SHEEN_COLOR_INTENSITY_MAP
-  int u_SheenColorIntensityUVSet;
-#ifdef HAS_SHEENCOLORINTENSITY_UV_TRANSFORM
-  float3x3 u_SheenColorIntensityUVTransform;
-#endif
-#endif
-#endif
-
-  // Clearcoat
-#ifdef MATERIAL_CLEARCOAT
-  float u_ClearcoatFactor;
-  float u_ClearcoatRoughnessFactor;
-
-  int u_ClearcoatUVSet;
-#ifdef HAS_CLEARCOAT_UV_TRANSFORM
-  float3x3 u_ClearcoatUVTransform;
-#endif
-
-  int u_ClearcoatRoughnessUVSet;
-#ifdef HAS_CLEARCOATROUGHNESS_UV_TRANSFORM
-  float3x3 u_ClearcoatRoughnessUVTransform;
-#endif
-
-  int u_ClearcoatNormalUVSet;
-#ifdef HAS_CLEARCOATNORMAL_UV_TRANSFORM
-  float3x3 u_ClearcoatNormalUVTransform;
-#endif
-#endif
-
-  // Anisotropy
-#ifdef MATERIAL_ANISOTROPY
-  float u_Anisotropy;
-  float3 u_AnisotropyDirection;
-
-  int u_AnisotropyUVSet;
-#ifdef HAS_ANISOTROPY_UV_TRANSFORM
-  float3x3 u_AnisotropyUVTransform;
-#endif
-
-  int u_AnisotropyDirectionUVSet;
-#ifdef HAS_ANISOTROPY_DIRECTION_UV_TRANSFORM
-  float3x3 u_AnisotropyDirectionUVTransform;
-#endif
-#endif
-
-  // Subsurface
-#ifdef MATERIAL_SUBSURFACE
-  float u_SubsurfaceScale;
-  float u_SubsurfaceDistortion;
-  float u_SubsurfacePower;
-  float3 u_SubsurfaceColorFactor;
-  float u_SubsurfaceThicknessFactor;
-
-#ifdef HAS_SUBSURFACE_COLOR_MAP
-  int u_SubsurfaceColorUVSet;
-#ifdef HAS_SUBSURFACECOLOR_UV_TRANSFORM
-  float3x3 u_SubsurfaceColorUVTransform;
-#endif
-#endif
-
-#ifdef HAS_SUBSURFACE_THICKNESS_MAP
-  int u_SubsurfaceThicknessUVSet;
-#ifdef HAS_SUBSURFACETHICKNESS_UV_TRANSFORM
-  float3x3 u_SubsurfaceThicknessUVTransform;
-#endif
-#endif
-#endif
-
-  // Thin Film
-#ifdef MATERIAL_THIN_FILM
-  float u_ThinFilmFactor;
-  float u_ThinFilmThicknessMinimum;
-  float u_ThinFilmThicknessMaximum;
-
-#ifdef HAS_THIN_FILM_MAP
-  int u_ThinFilmUVSet;
-#ifdef HAS_THIN_FILM_UV_TRANSFORM
-  float3x3 u_ThinFilmUVTransform;
-#endif
-#endif
-
-#ifdef HAS_THIN_FILM_THICKNESS_MAP
-  int u_ThinFilmThicknessUVSet;
-#ifdef HAS_THIN_FILM_THICKNESS_UV_TRANSFORM
-  float3x3 u_ThinFilmThicknessUVTransform;
-#endif
-#endif
-#endif
-
-#ifdef MATERIAL_IOR
-  // IOR (in .x) and the corresponding f0 (in .y)
-  float2 u_IOR_and_f0;
-#endif
-
-  // Thickness
-#ifdef MATERIAL_THICKNESS
-  float u_Thickness;
-
-  // Thickness:
-#ifdef HAS_THICKNESS_MAP
-  int u_ThicknessUVSet;
-#ifdef HAS_THICKNESS_UV_TRANSFORM
-  float3x3 u_ThicknessUVTransform;
-#endif
-#endif
-#endif
-
-  // Absorption
-#ifdef MATERIAL_ABSORPTION
-  float3 u_AbsorptionColor;
-#endif
-
-  // Transmission
-#ifdef MATERIAL_TRANSMISSION
-  float u_Transmission;
-#endif
 } s_gltfFragInfo = {};
 
 
@@ -450,10 +239,7 @@ void vcGLTF_GenerateGlobalShaders()
   types[vcRSF_HasSkinning].layoutType0 = vcVLT_BoneIDs;
   types[vcRSF_HasSkinning].layoutType1 = vcVLT_BoneWeights;
 
-  const int RequiredDefines = 2;
-  const char* defines[RequiredDefines + vcRSF_Count] = {};
-  defines[0] = "MATERIAL_METALLICROUGHNESS";
-  defines[1] = "USE_PUNCTUAL";
+  const char* defines[vcRSF_Count] = {};
 
   const int RequiredVertTypes = 2;
   vcVertexLayoutTypes vltList[RequiredVertTypes + (vcRSF_Count*2)] = {};
@@ -477,7 +263,7 @@ void vcGLTF_GenerateGlobalShaders()
     {
       if (i & (1 << j))
       {
-        defines[RequiredDefines + extraDefines] = types[j].pDefine;
+        defines[extraDefines] = types[j].pDefine;
         vltList[RequiredVertTypes + extraLayouts] = types[j].layoutType0;
         
         ++extraDefines;
@@ -493,7 +279,7 @@ void vcGLTF_GenerateGlobalShaders()
 
     vcLayout_Sort(&vltList[RequiredVertTypes], extraLayouts);
 
-    vcShader_CreateFromText(&g_shaderTypes[i].pShader, pVertShaderSource, pFragShaderSource, vltList, RequiredVertTypes + extraLayouts, "gltfVertexShader", "gltfFragmentShader", defines, RequiredDefines + extraDefines);
+    vcShader_CreateFromText(&g_shaderTypes[i].pShader, pVertShaderSource, pFragShaderSource, vltList, RequiredVertTypes + extraLayouts, "gltfVertexShader", "gltfFragmentShader", defines, extraDefines);
 
     vcShader_GetConstantBuffer(&g_shaderTypes[i].pVertUniformBuffer, g_shaderTypes[i].pShader, "u_EveryFrame", sizeof(s_gltfVertInfo));
     vcShader_GetConstantBuffer(&g_shaderTypes[i].pSkinningUniformBuffer, g_shaderTypes[i].pShader, "u_SkinningInfo", sizeof(s_gltfVertSkinningInfo));
@@ -1093,6 +879,12 @@ udResult vcGLTF_Load(vcGLTFScene **ppScene, const char *pFilename, udWorkerPool 
   pScene->pPath = udAllocType(char, pathLen + 1, udAF_Zero);
   path.ExtractFolder(pScene->pPath, pathLen + 1);
 
+  if (gltfData.Get("extensionsRequired").IsArray())
+    __debugbreak();
+
+  if (gltfData.Get("extensionsUsed").IsArray())
+    __debugbreak();
+
   pScene->nodeCount = (int)gltfData.Get("nodes").ArrayLength();
   pScene->pNodes = udAllocType(vcGLTFNode, pScene->nodeCount, udAF_Zero);
 
@@ -1182,23 +974,6 @@ udResult vcGLTF_Render(vcGLTFScene *pScene, udRay<double> camera, udDouble4x4 wo
     s_gltfVertInfo.u_NormalMatrix = udTranspose(udInverse(s_gltfVertInfo.u_ModelMatrix));
 
     s_gltfFragInfo.u_Camera = udFloat3::create(camera.position);
-
-    // Lights
-    // Directional Lights
-    s_gltfFragInfo.u_Lights[0].direction = udNormalize(udFloat3::create(0.f, -0.1f, -0.9f));
-    s_gltfFragInfo.u_Lights[0].color = { 0.9f, 0.8f, 1.f };
-    s_gltfFragInfo.u_Lights[0].intensity = 10.f;
-    s_gltfFragInfo.u_Lights[0].type = 0;
-
-    // Pointlight
-    s_gltfFragInfo.u_Lights[1].direction = udFloat3::create(camera.direction);
-    s_gltfFragInfo.u_Lights[1].position = udFloat3::create(camera.position);
-    s_gltfFragInfo.u_Lights[1].color = { 1.0f, 1.0f, 1.f };
-    s_gltfFragInfo.u_Lights[1].intensity = 1.f;
-    s_gltfFragInfo.u_Lights[1].range = 100000.f;
-    s_gltfFragInfo.u_Lights[1].type = 2;
-    s_gltfFragInfo.u_Lights[1].innerConeCos = udCos(UD_PIf / 8.f);
-    s_gltfFragInfo.u_Lights[1].outerConeCos = udCos(UD_PIf / 4.f);
 
     for (int j = 0; j < pScene->pMeshes[pScene->meshInstances[i].meshID].numPrimitives; ++j)
     {
