@@ -355,8 +355,8 @@ PS_OUTPUT main(PS_INPUT input)
     baseColor.a = 1.0;
   }
 
-  output.baseRGB_Metal = float4(baseColor.xyz, materialInfo.metallic);
   output.emitRGB_Rough = float4(f_emissive, materialInfo.perceptualRoughness);
+  output.baseRGB_Metal = float4(baseColor.xyz, materialInfo.metallic);
   output.normXYZ_X = float4(n * 0.5 + 0.5, 0.0);
 
   return output;

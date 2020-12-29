@@ -21,6 +21,8 @@ enum vcGLTFRenderPass
   vcGLTFRP_Shadows,
 };
 
+udResult vcGLTF_Update(vcGLTFScene *pScene, double dt);
+
 udResult vcGLTF_Render(vcGLTFScene *ppScene, udRay<double> camera, udDouble4x4 worldMatrix, udDouble4x4 viewMatrix, udDouble4x4 projectionMatrix, vcGLTFRenderPass pass);
 
 #endif //vcGLTF_h__

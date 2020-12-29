@@ -4,7 +4,7 @@ cbuffer u_cameraPlaneParams
   float s_CameraFarPlane;
   float u_clipZNear;
   float u_clipZFar;
-}; 
+};
 
 cbuffer u_EveryFrame : register(b0)
 {
@@ -143,175 +143,175 @@ struct PS_INPUT
 #ifdef HAS_SKINNING
 float4x4 getSkinningMatrix(VS_INPUT input)
 {
-  float4x4 skin = float4x4(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1);
+  float4x4 skin = float4x4(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
 
-    skin +=
-        input.a_Weights.x * u_jointMatrix[int(input.a_Joints.x)] +
-        input.a_Weights.y * u_jointMatrix[int(input.a_Joints.y)] +
-        input.a_Weights.z * u_jointMatrix[int(input.a_Joints.z)] +
-        input.a_Weights.w * u_jointMatrix[int(input.a_Joints.w)];
+  skin +=
+    input.a_Weights.x * u_jointMatrix[int(input.a_Joints.x * 256)] +
+    input.a_Weights.y * u_jointMatrix[int(input.a_Joints.y * 256)] +
+    input.a_Weights.z * u_jointMatrix[int(input.a_Joints.z * 256)] +
+    input.a_Weights.w * u_jointMatrix[int(input.a_Joints.w * 256)];
 
-    #ifdef HAS_SKINNING_EXTENDED
-    skin +=
-        input.a_WeightsEx.x * u_jointMatrix[int(input.a_JointsEx.x)] +
-        input.a_WeightsEx.y * u_jointMatrix[int(input.a_JointsEx.y)] +
-        input.a_WeightsEx.z * u_jointMatrix[int(input.a_JointsEx.z)] +
-        input.a_WeightsEx.w * u_jointMatrix[int(input.a_JointsEx.w)];
-    #endif
+#ifdef HAS_SKINNING_EXTENDED
+  skin +=
+    input.a_WeightsEx.x * u_jointMatrix[int(input.a_JointsEx.x * 256)] +
+    input.a_WeightsEx.y * u_jointMatrix[int(input.a_JointsEx.y * 256)] +
+    input.a_WeightsEx.z * u_jointMatrix[int(input.a_JointsEx.z * 256)] +
+    input.a_WeightsEx.w * u_jointMatrix[int(input.a_JointsEx.w * 256)];
+#endif
 
-    return skin;
+  return skin;
 }
 
 float4x4 getSkinningNormalMatrix(VS_INPUT input)
 {
-  float4x4 skin = float4x4(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1);
+  float4x4 skin = float4x4(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
 
   skin +=
-        input.a_Weights.x * u_jointNormalMatrix[int(input.a_Joints.x)] +
-        input.a_Weights.y * u_jointNormalMatrix[int(input.a_Joints.y)] +
-        input.a_Weights.z * u_jointNormalMatrix[int(input.a_Joints.z)] +
-        input.a_Weights.w * u_jointNormalMatrix[int(input.a_Joints.w)];
+    input.a_Weights.x * u_jointNormalMatrix[int(input.a_Joints.x * 256)] +
+    input.a_Weights.y * u_jointNormalMatrix[int(input.a_Joints.y * 256)] +
+    input.a_Weights.z * u_jointNormalMatrix[int(input.a_Joints.z * 256)] +
+    input.a_Weights.w * u_jointNormalMatrix[int(input.a_Joints.w * 256)];
 
-    #ifdef HAS_SKINNING_EXTENDED
+#ifdef HAS_SKINNING_EXTENDED
   skin +=
-        input.a_WeightsEx.x * u_jointNormalMatrix[int(input.a_JointsEx.x)] +
-        input.a_WeightsEx.y * u_jointNormalMatrix[int(input.a_JointsEx.y)] +
-        input.a_WeightsEx.z * u_jointNormalMatrix[int(input.a_JointsEx.z)] +
-        input.a_WeightsEx.w * u_jointNormalMatrix[int(input.a_JointsEx.w)];
-    #endif
+    input.a_WeightsEx.x * u_jointNormalMatrix[int(input.a_JointsEx.x * 256)] +
+    input.a_WeightsEx.y * u_jointNormalMatrix[int(input.a_JointsEx.y * 256)] +
+    input.a_WeightsEx.z * u_jointNormalMatrix[int(input.a_JointsEx.z * 256)] +
+    input.a_WeightsEx.w * u_jointNormalMatrix[int(input.a_JointsEx.w * 256)];
+#endif
 
-    return skin;
+  return skin;
 }
 #endif // HAS_SKINNING
 
 #ifdef USE_MORPHING
 float4 getTargetPosition(VS_INPUT input)
 {
-    float4 pos = float4(0, 0, 0, 0);
+  float4 pos = float4(0, 0, 0, 0);
 
 #ifdef HAS_TARGET_POSITION0
-    pos.xyz += u_morphWeights[0] * input.a_Target_Position0;
+  pos.xyz += u_morphWeights[0] * input.a_Target_Position0;
 #endif
 
 #ifdef HAS_TARGET_POSITION1
-    pos.xyz += u_morphWeights[1] * input.a_Target_Position1;
+  pos.xyz += u_morphWeights[1] * input.a_Target_Position1;
 #endif
 
 #ifdef HAS_TARGET_POSITION2
-    pos.xyz += u_morphWeights[2] * input.a_Target_Position2;
+  pos.xyz += u_morphWeights[2] * input.a_Target_Position2;
 #endif
 
 #ifdef HAS_TARGET_POSITION3
-    pos.xyz += u_morphWeights[3] * input.a_Target_Position3;
+  pos.xyz += u_morphWeights[3] * input.a_Target_Position3;
 #endif
 
 #ifdef HAS_TARGET_POSITION4
-    pos.xyz += u_morphWeights[4] * input.a_Target_Position4;
+  pos.xyz += u_morphWeights[4] * input.a_Target_Position4;
 #endif
 
-    return pos;
+  return pos;
 }
 
 float3 getTargetNormal(VS_INPUT input)
 {
-    float3 normal = float3(0, 0, 0);
+  float3 normal = float3(0, 0, 0);
 
 #ifdef HAS_TARGET_NORMAL0
-    normal += u_morphWeights[0] * input.a_Target_Normal0;
+  normal += u_morphWeights[0] * input.a_Target_Normal0;
 #endif
 
 #ifdef HAS_TARGET_NORMAL1
-    normal += u_morphWeights[1] * input.a_Target_Normal1;
+  normal += u_morphWeights[1] * input.a_Target_Normal1;
 #endif
 
 #ifdef HAS_TARGET_NORMAL2
-    normal += u_morphWeights[2] * input.a_Target_Normal2;
+  normal += u_morphWeights[2] * input.a_Target_Normal2;
 #endif
 
 #ifdef HAS_TARGET_NORMAL3
-    normal += u_morphWeights[3] * input.a_Target_Normal3;
+  normal += u_morphWeights[3] * input.a_Target_Normal3;
 #endif
 
 #ifdef HAS_TARGET_NORMAL4
-    normal += u_morphWeights[4] * input.a_Target_Normal4;
+  normal += u_morphWeights[4] * input.a_Target_Normal4;
 #endif
 
-    return normal;
+  return normal;
 }
 
 float3 getTargetTangent(VS_INPUT input)
 {
-    float3 tangent = float3(0, 0, 0);
+  float3 tangent = float3(0, 0, 0);
 
 #ifdef HAS_TARGET_TANGENT0
-    tangent += u_morphWeights[0] * input.a_Target_Tangent0;
+  tangent += u_morphWeights[0] * input.a_Target_Tangent0;
 #endif
 
 #ifdef HAS_TARGET_TANGENT1
-    tangent += u_morphWeights[1] * input.a_Target_Tangent1;
+  tangent += u_morphWeights[1] * input.a_Target_Tangent1;
 #endif
 
 #ifdef HAS_TARGET_TANGENT2
-    tangent += u_morphWeights[2] * input.a_Target_Tangent2;
+  tangent += u_morphWeights[2] * input.a_Target_Tangent2;
 #endif
 
 #ifdef HAS_TARGET_TANGENT3
-    tangent += u_morphWeights[3] * input.a_Target_Tangent3;
+  tangent += u_morphWeights[3] * input.a_Target_Tangent3;
 #endif
 
 #ifdef HAS_TARGET_TANGENT4
-    tangent += u_morphWeights[4] * input.a_Target_Tangent4;
+  tangent += u_morphWeights[4] * input.a_Target_Tangent4;
 #endif
 
-    return tangent;
+  return tangent;
 }
 
 #endif // !USE_MORPHING
 
 float4 getPosition(VS_INPUT input)
 {
-    float4 pos = float4(input.a_Position, 1.0);
+  float4 pos = float4(input.a_Position, 1.0);
 
 #ifdef USE_MORPHING
-    pos += getTargetPosition(input);
+  pos += getTargetPosition(input);
 #endif
 
 #ifdef HAS_SKINNING
-    pos = mul(getSkinningMatrix(input), pos);
+  pos = mul(getSkinningMatrix(input), pos);
 #endif
 
-    return pos;
+  return pos;
 }
 
 float3 getNormal(VS_INPUT input)
 {
-    float3 normal = input.a_Normal;
+  float3 normal = input.a_Normal;
 
 #ifdef USE_MORPHING
-    normal += getTargetNormal(input);
+  normal += getTargetNormal(input);
 #endif
 
 #ifdef HAS_SKINNING
-    normal = mul(getSkinningNormalMatrix(input), float4(normal, 0)).xyz;
+  normal = mul(getSkinningNormalMatrix(input), float4(normal, 0)).xyz;
 #endif
 
-    return normalize(normal);
+  return normalize(normal);
 }
 
 #ifdef HAS_TANGENTS
 float3 getTangent(VS_INPUT input)
 {
-    float3 tangent = input.a_Tangent.xyz;
+  float3 tangent = input.a_Tangent.xyz;
 
 #ifdef USE_MORPHING
-    tangent += getTargetTangent(input);
+  tangent += getTargetTangent(input);
 #endif
 
 #ifdef HAS_SKINNING
-    tangent = mul(getSkinningMatrix(input), float4(tangent, 0)).xyz;
+  tangent = mul(getSkinningMatrix(input), float4(tangent, 0)).xyz;
 #endif
 
-    return normalize(tangent);
+  return normalize(tangent);
 }
 #endif
 

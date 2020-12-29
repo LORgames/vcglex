@@ -61,20 +61,50 @@ enum vcGLTFFeatureBits
 
 struct vcGLTFNode
 {
+  bool dirty;
+
+  vcGLTFNode *pParent;
+
+  int childCount;
+  vcGLTFNode **ppChildren;
+
+  udFloat4x4 inverseBindMatrix;
+  udFloat4x4 combinedMatrix;
+
   udFloat3 translation;
   udFloatQuat rotation;
   udFloat3 scale;
 
-  udFloat4x4 GetMat()
+  udFloat4x4 GetMat(bool forceRecurse)
   {
-    return udFloat4x4::rotationQuat(rotation, translation) * udFloat4x4::scaleNonUniform(scale);
+    if (dirty || forceRecurse)
+    {
+      dirty = false;
+
+      if (pParent != nullptr)
+        combinedMatrix = pParent->GetMat(false) * udFloat4x4::rotationQuat(rotation, translation) * udFloat4x4::scaleNonUniform(scale);
+      else
+        combinedMatrix = udFloat4x4::rotationQuat(rotation, translation) * udFloat4x4::scaleNonUniform(scale);
+
+      if (childCount > 0)
+      {
+        for (int i = 0; i < childCount; ++i)
+        {
+          ppChildren[i]->dirty = true;
+          ppChildren[i]->GetMat(forceRecurse);
+        }
+      }
+    }
+
+    return combinedMatrix;
   }
 };
 
 struct vcGLTFMeshInstance
 {
+  vcGLTFNode *pNode;
   int meshID;
-  udFloat4x4 matrix;
+  int skinID; // -1
 };
 
 enum vcGLTF_AlphaMode
@@ -126,6 +156,72 @@ struct vcGLTFBuffer
   uint8_t *pBytes;
 };
 
+enum vcGLTFChannelTarget
+{
+  vcGLTFChannelTarget_Translation, // X,Y,Z
+  vcGLTFChannelTarget_Rotation, // Quat, X,Y,Z,W
+  vcGLTFChannelTarget_Scale, // X,Y,Z
+  vcGLTFChannelTarget_Weights, // Morph Targets
+
+  // The spec also allows any other "string"
+
+  vcGLTFChannelTarget_Count
+};
+
+enum vcGLTFInterpolation
+{
+  vcGLTFInterpolation_Linear, // "LINEAR" Default
+  vcGLTFInterpolation_Step,
+  vcGLTFInterpolation_CublicSpline,
+
+  // The spec also allows any other "string"
+
+  vcGLTFInterpolation_Count
+};
+
+struct vcGLTFAnimationSampler
+{
+  int steps;
+
+  float *pTime;
+  vcGLTFInterpolation interpolationMethod;
+  union
+  {
+    udFloat3 *pOutputFloat3;
+    udFloatQuat *pOutputFloatQuat;
+  };
+};
+
+struct vcGLTFAnimationChannel
+{
+  vcGLTFNode *pNode;
+  vcGLTFAnimationSampler *pSampler;
+
+  vcGLTFChannelTarget target;
+};
+
+struct vcGLTFAnimation
+{
+  const char *pName;
+  float totalTime;
+
+  int numChannels;
+  vcGLTFAnimationChannel *pChannels;
+
+  int numSamplers;
+  vcGLTFAnimationSampler *pSamplers;
+};
+
+struct vcGLTFSkin
+{
+  const char *pName;
+
+  int baseJoint;
+  int jointCount;
+  int *pJoints;
+  udFloat4x4 *pInverseBindMatrices; // If nullptr; identity
+};
+
 struct vcGLTFScene
 {
   char *pPath;
@@ -143,6 +239,16 @@ struct vcGLTFScene
 
   int textureCount;
   vcTexture **ppTextures;
+
+  int animationCount;
+  vcGLTFAnimation *pAnimations;
+
+  int skinCount;
+  vcGLTFSkin *pSkins;
+
+  // Move these to a "scene instance" at some point...
+  float currentTime;
+  int currentAnimation;
 };
 
 struct vcGLTFShader
@@ -393,6 +499,122 @@ udFloat3 GetNormal(int i0, int i1, int i2, uint8_t *pBufferStart, ptrdiff_t byte
   return udCross(p1 - p0, p2 - p0);
 }
 
+udResult vcGLTF_ReadAccessor(vcGLTFScene *pScene, const udJSON &root, int attributeAccessorIndex, int *pTotalOffset, int readCount, uint8_t *pPtr, int stride, vcVertexLayoutTypes layoutType = vcVLT_TotalTypes)
+{
+  udResult result = udR_Success;
+
+  const udJSON& accessor = root.Get("accessors[%d]", attributeAccessorIndex);
+
+  int bufferViewID = accessor.Get("bufferView").AsInt(-1);
+  int bufferID = root.Get("bufferViews[%d].buffer", bufferViewID).AsInt();
+  if (bufferID <= -1)
+    __debugbreak();
+
+  const char* pAccessorType = accessor.Get("type").AsString();
+  ptrdiff_t byteOffset = accessor.Get("byteOffset").AsInt64() + root.Get("bufferViews[%d].byteOffset", accessor.Get("bufferView").AsInt(-1)).AsInt64();
+  ptrdiff_t byteStride = accessor.Get("byteStride").AsInt64() + root.Get("bufferViews[%d].byteStride", accessor.Get("bufferView").AsInt(-1)).AsInt64();
+
+  int count = 3;
+  int offset = *pTotalOffset;
+
+  if (layoutType == vcVLT_ColourBGRA)
+  {
+    if (udStrEqual(pAccessorType, "VEC3"))
+      count = 3;
+    else
+      count = 4;
+    *pTotalOffset += sizeof(uint32_t);
+  }
+  else if (layoutType == vcVLT_BoneIDs)
+  {
+    count = 4;
+    *pTotalOffset += sizeof(uint32_t);
+  }
+  else if (udStrEqual(pAccessorType, "VEC3"))
+  {
+    count = 3;
+    *pTotalOffset += (count * sizeof(float));
+  }
+  else if (udStrEqual(pAccessorType, "VEC2"))
+  {
+    count = 2;
+    *pTotalOffset += (count * sizeof(float));
+  }
+  else if (udStrEqual(pAccessorType, "VEC4"))
+  {
+    count = 4;
+    *pTotalOffset += (count * sizeof(float));
+  }
+  else if (udStrEqual(pAccessorType, "SCALAR"))
+  {
+    count = 1;
+    *pTotalOffset += (count * sizeof(float));
+  }
+  else if (udStrEqual(pAccessorType, "MAT4"))
+  {
+    count = 16;
+    *pTotalOffset += (count * sizeof(float));
+  }
+  else
+  {
+    __debugbreak();
+  }
+
+  if (bufferID >= pScene->bufferCount || pScene->pBuffers[bufferID].pBytes == nullptr)
+  {
+    __debugbreak(); // Buffer out of bounds
+  }
+
+  if (byteStride == 0)
+    byteStride = count * sizeof(float);
+
+  if (stride == 0)
+    stride = (int)byteStride;
+
+  if (layoutType == vcVLT_ColourBGRA)
+  {
+    for (int vi = 0; vi < readCount; ++vi)
+    {
+      float *pFloats = (float*)(pScene->pBuffers[bufferID].pBytes + byteOffset + vi * byteStride);
+      int32_t *pVertI32 = (int32_t*)(pPtr + stride * vi + offset);
+
+      uint32_t temp = ((int(udRound(pFloats[0] * 255.f)) & 0xFF) << 0) | ((int(udRound(pFloats[1] * 255.f)) & 0xFF) << 8) | ((int(udRound(pFloats[2] * 255.f)) & 0xFF) << 16);
+
+      if (count == 3)
+        temp |= 0xFF000000;
+      else
+        temp |= (int(pFloats[3] * 255.f) << 24);
+
+      pVertI32[0] = temp;
+    }
+  }
+  else if (layoutType == vcVLT_BoneIDs)
+  {
+    for (int vi = 0; vi < readCount; ++vi)
+    {
+      uint16_t *pIDs = (uint16_t*)(pScene->pBuffers[bufferID].pBytes + byteOffset + vi * byteStride);
+      uint32_t *pVertI32 = (uint32_t*)(pPtr + stride * vi + offset);
+
+      *pVertI32 = ((pIDs[3] & 0xFF) << 24) | ((pIDs[2] & 0xFF) << 16) | ((pIDs[1] & 0xFF) << 8) | ((pIDs[0] & 0xFF) << 0);
+    }
+  }
+  else
+  {
+    for (int vi = 0; vi < readCount; ++vi)
+    {
+      float *pFloats = (float*)(pScene->pBuffers[bufferID].pBytes + byteOffset + vi * byteStride);
+      float *pVertFloats = (float*)(pPtr + stride * vi + offset);
+
+      for (int element = 0; element < count; ++element)
+      {
+        pVertFloats[element] = pFloats[element];
+      }
+    }
+  }
+
+  return result;
+}
+
 udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
 {
   const udJSON &mesh = root.Get("meshes[%d]", meshID);
@@ -570,8 +792,7 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
 
       if (pTypes[j] == vcVLT_Normal3)
         hasNormals = true;
-      
-      if (pTypes[j] == vcVLT_Unsupported)
+      else if (pTypes[j] == vcVLT_Unsupported)
         __debugbreak();
     }
 
@@ -682,99 +903,7 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
           }
         }
 
-        const udJSON& accessor = root.Get("accessors[%d]", attributeAccessorIndex);
-
-        int bufferViewID = accessor.Get("bufferView").AsInt(-1);
-        int bufferID = root.Get("bufferViews[%d].buffer", bufferViewID).AsInt();
-        if (bufferID <= -1)
-          __debugbreak();
-
-        const char* pAccessorType = accessor.Get("type").AsString();
-        ptrdiff_t byteOffset = accessor.Get("byteOffset").AsInt64() + root.Get("bufferViews[%d].byteOffset", accessor.Get("bufferView").AsInt(-1)).AsInt64();
-        ptrdiff_t byteStride = accessor.Get("byteStride").AsInt64() + root.Get("bufferViews[%d].byteStride", accessor.Get("bufferView").AsInt(-1)).AsInt64();
-
-        int count = 3;
-        int offset = totalOffset;
-
-        if (pTypes[ai] == vcVLT_ColourBGRA)
-        {
-          if (udStrEqual(pAccessorType, "VEC3"))
-            count = 3;
-          else
-            count = 4;
-          totalOffset += sizeof(uint32_t);
-        }
-        else if (pTypes[ai] == vcVLT_BoneIDs)
-        {
-          count = 4;
-          totalOffset += sizeof(uint32_t);
-        }
-        else if (udStrEqual(pAccessorType, "VEC3"))
-        {
-          count = 3;
-          totalOffset += (count * sizeof(float));
-        }
-        else if (udStrEqual(pAccessorType, "VEC2"))
-        {
-          count = 2;
-          totalOffset += (count * sizeof(float));
-        }
-        else if (udStrEqual(pAccessorType, "VEC4"))
-        {
-          count = 4;
-          totalOffset += (count * sizeof(float));
-        }
-        else
-        {
-          __debugbreak();
-        }
-
-        if (bufferID >= pScene->bufferCount || pScene->pBuffers[bufferID].pBytes == nullptr)
-          continue;
-
-        if (byteStride == 0)
-          byteStride = count * sizeof(float);
-
-        if (pTypes[ai] == vcVLT_ColourBGRA)
-        {
-          for (int vi = 0; vi < maxCount; ++vi)
-          {
-            float *pFloats = (float*)(pScene->pBuffers[bufferID].pBytes + byteOffset + vi * byteStride);
-            int32_t *pVertI32 = (int32_t*)(pVertData + vertexStride * vi + offset);
-
-            uint32_t temp = ((int(udRound(pFloats[0] * 255.f)) & 0xFF) << 0) | ((int(udRound(pFloats[1] * 255.f)) & 0xFF) << 8) | ((int(udRound(pFloats[2] * 255.f)) & 0xFF) << 16);
-
-            if (count == 3)
-              temp |= 0xFF000000;
-            else
-              temp |= (int(pFloats[3] * 255.f) << 24);
-
-            pVertI32[0] = temp;
-          }
-        }
-        else if (pTypes[ai] == vcVLT_BoneIDs)
-        {
-          for (int vi = 0; vi < maxCount; ++vi)
-          {
-            uint16_t *pIDs = (uint16_t*)(pScene->pBuffers[bufferID].pBytes + byteOffset + vi * byteStride);
-            uint32_t *pVertI32 = (uint32_t*)(pVertData + vertexStride * vi + offset);
-
-            *pVertI32 = ((pIDs[0] & 0xFF) << 24) | ((pIDs[1] & 0xFF) << 16) | ((pIDs[2] & 0xFF) << 8) | ((pIDs[3] & 0xFF) << 0);
-          }
-        }
-        else
-        {
-          for (int vi = 0; vi < maxCount; ++vi)
-          {
-            float *pFloats = (float*)(pScene->pBuffers[bufferID].pBytes + byteOffset + vi * byteStride);
-            float *pVertFloats = (float*)(pVertData + vertexStride * vi + offset);
-
-            for (int element = 0; element < count; ++element)
-            {
-              pVertFloats[element] = pFloats[element];
-            }
-          }
-        }
+        vcGLTF_ReadAccessor(pScene, root, attributeAccessorIndex, &totalOffset, maxCount, pVertData, vertexStride, pTypes[ai]);
       }
     }
 
@@ -799,21 +928,31 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
   return udR_Success;
 }
 
-udResult vcGLTF_ProcessChildNode(vcGLTFScene *pScene, const udJSON &root, const udJSON &child, udFloat4x4 parentMatrix)
+udResult vcGLTF_ProcessChildNode(vcGLTFScene *pScene, const udJSON &root, int nodeIndex, udFloat4x4 parentMatrix, vcGLTFNode *pParentNode)
 {
+  const udJSON &child = root.Get("nodes[%d]", nodeIndex);
+  vcGLTFNode *pNode = &pScene->pNodes[nodeIndex];
+
+  if (pNode->pParent != nullptr && pNode->pParent != pParentNode)
+    __debugbreak(); // This means this node has multiple parents
+
+  pNode->pParent = pParentNode;
+  pNode->dirty = true;
+
   udFloat4x4 childMatrix = udFloat4x4::identity();
   
   if (child.Get("matrix").IsArray())
   {
     childMatrix = udFloat4x4::create(child.Get("matrix").AsDouble4x4());
+    childMatrix.extractTransforms(pNode->translation, pNode->scale, pNode->rotation);
   }
   else
   {
-    udFloat3 translation = child.Get("translation").AsFloat3();
-    udFloatQuat rotation = udFloatQuat::create(child.Get("rotation").AsQuaternion());
-    udFloat3 scale = child.Get("scale").AsFloat3(udFloat3::one());
+    pNode->translation = child.Get("translation").AsFloat3();
+    pNode->rotation = udFloatQuat::create(child.Get("rotation").AsQuaternion());
+    pNode->scale = child.Get("scale").AsFloat3(udFloat3::one());
     
-    childMatrix = udFloat4x4::rotationQuat(rotation, translation) * udFloat4x4::scaleNonUniform(scale);
+    childMatrix = udFloat4x4::rotationQuat(pNode->rotation, pNode->translation) * udFloat4x4::scaleNonUniform(pNode->scale);
   }
 
   udFloat4x4 chainedMatrix = parentMatrix * childMatrix;
@@ -822,8 +961,12 @@ udResult vcGLTF_ProcessChildNode(vcGLTFScene *pScene, const udJSON &root, const 
   {
     vcGLTFMeshInstance *pMesh = pScene->meshInstances.PushBack();
 
-    pMesh->matrix = chainedMatrix;
+    pMesh->pNode = pNode;
     pMesh->meshID = child.Get("mesh").AsInt();
+    pMesh->skinID = child.Get("skin").AsInt(0);
+
+    if (pMesh->skinID >= (int)root.Get("skins").ArrayLength())
+      pMesh->skinID = -1;
 
     if (pMesh->meshID >= pScene->meshCount)
       pMesh->meshID = 0;
@@ -831,23 +974,202 @@ udResult vcGLTF_ProcessChildNode(vcGLTFScene *pScene, const udJSON &root, const 
     if (pScene->pMeshes[pMesh->meshID].pPrimitives == nullptr)
       vcGLTF_CreateMesh(pScene, root, pMesh->meshID);
   }
-  else if (!child.Get("children").IsVoid())
-  {
-    for (int i = 0; i < child.Get("children").ArrayLength(); ++i)
-      vcGLTF_ProcessChildNode(pScene, root, root.Get("nodes[%d]", child.Get("children[%zu]", i).AsInt()), chainedMatrix);
-  }
   else if (!child.Get("camera").IsVoid() || !child.Get("light").IsVoid())
   {
     // We don't care about these
   }
-  else if (child.Get("name").IsString())
-  {
-    // We don't care about these?
-  }
   else
   {
-    // New node type
-    __debugbreak();
+    // We support "animation heirachy" nodes which have these types
+    const char *allowedTypes[] =
+    {
+      "name",
+      "translation",
+      "rotation",
+      "scale",
+      "children",
+      "matrix"
+    };
+
+    for (size_t memberIndex = 0; memberIndex < child.MemberCount(); ++memberIndex)
+    {
+      size_t allowedTypeIndex = 0;
+
+      for (allowedTypeIndex = 0; allowedTypeIndex < udLengthOf(allowedTypes); ++allowedTypeIndex)
+      {
+        if (udStrEqual(allowedTypes[allowedTypeIndex], child.GetMemberName(memberIndex)))
+          break;
+      }
+
+      if (allowedTypeIndex == udLengthOf(allowedTypes))
+      {
+        __debugbreak(); // New node type
+      }
+    }
+  }
+
+  if (!child.Get("children").IsVoid())
+  {
+    pNode->childCount = (int)child.Get("children").ArrayLength();
+    pNode->ppChildren = udAllocType(vcGLTFNode*, pNode->childCount, udAF_Zero);
+
+    for (int i = 0; i < child.Get("children").ArrayLength(); ++i)
+    {
+      int childIndex = child.Get("children[%zu]", i).AsInt();
+      vcGLTF_ProcessChildNode(pScene, root, childIndex, chainedMatrix, pNode);
+      pNode->ppChildren[i] = &pScene->pNodes[childIndex];
+    }
+  }
+
+  return udR_Success;
+}
+
+udResult vcGLTF_LoadAnimations(vcGLTFScene *pScene, const udJSON &root)
+{
+  udResult result = udR_Success;
+
+  for (int i = 0; i < pScene->animationCount; ++i)
+  {
+    printf("Loading Animation %d\n", i);
+
+    vcGLTFAnimation *pAnim = &pScene->pAnimations[i];
+
+    pAnim->numSamplers = (int)root.Get("animations[%d].samplers", i).ArrayLength();
+    pAnim->pSamplers = udAllocType(vcGLTFAnimationSampler, pAnim->numSamplers, udAF_Zero);
+
+    for (int samplerIndex = 0; samplerIndex < pAnim->numSamplers; ++samplerIndex)
+    {
+      int totalOffset = 0;
+
+      int inputAccessor = root.Get("animations[%d].samplers[%d].input", i, samplerIndex).AsInt();
+      int inputCount = root.Get("accessors[%d].count", inputAccessor).AsInt();
+
+      pAnim->pSamplers[samplerIndex].steps = inputCount;
+      pAnim->pSamplers[samplerIndex].pTime = udAllocType(float, inputCount, udAF_None);
+      vcGLTF_ReadAccessor(pScene, root, inputAccessor, &totalOffset, inputCount, (uint8_t*)pAnim->pSamplers[samplerIndex].pTime, 0);
+
+      int outputAccessor = root.Get("animations[%d].samplers[%d].output", i, samplerIndex).AsInt();
+      int outputCount = root.Get("accessors[%d].count", outputAccessor).AsInt();
+      int outputType = root.Get("accessors[%d].componentType", outputAccessor).AsInt();
+
+      const char *pOutputType = root.Get("accessors[%d].type", outputAccessor).AsString();
+
+      const char *interpolationNames[] = { "LINEAR", "STEP", "CUBICSPLINE" };
+      UDCOMPILEASSERT(udLengthOf(interpolationNames) == vcGLTFInterpolation_Count, "Array out of date!");
+
+      const char *pInterpolationName = root.Get("animations[%d].samplers[%d].interpolation", i, samplerIndex).AsString("LINEAR");
+
+      int j = 0;
+      for (j = 0; j < vcGLTFInterpolation_Count; ++j)
+      {
+        if (udStrEqual(interpolationNames[j], pInterpolationName))
+        {
+          pAnim->pSamplers[samplerIndex].interpolationMethod = (vcGLTFInterpolation)j;
+          break;
+        }
+      }
+
+      if (j == vcGLTFInterpolation_Count)
+        __debugbreak();
+
+      if (pAnim->pSamplers[samplerIndex].interpolationMethod != vcGLTFInterpolation_CublicSpline && inputCount != outputCount)
+        __debugbreak();
+
+      if (pAnim->pSamplers[samplerIndex].interpolationMethod == vcGLTFInterpolation_CublicSpline && inputCount != (outputCount/3))
+        __debugbreak();
+
+      totalOffset = 0;
+
+      if (outputType == vcGLTFType_F32)
+      {
+        if (udStrEqual(pOutputType, "VEC4"))
+        {
+          pAnim->pSamplers[samplerIndex].pOutputFloatQuat = udAllocType(udFloatQuat, outputCount, udAF_None);
+          vcGLTF_ReadAccessor(pScene, root, outputAccessor, &totalOffset, outputCount, (uint8_t*)pAnim->pSamplers[samplerIndex].pOutputFloatQuat, 0);
+        }
+        else if(udStrEqual(pOutputType, "VEC3"))
+        {
+          pAnim->pSamplers[samplerIndex].pOutputFloat3 = udAllocType(udFloat3, outputCount, udAF_None);
+          vcGLTF_ReadAccessor(pScene, root, outputAccessor, &totalOffset, outputCount, (uint8_t*)pAnim->pSamplers[samplerIndex].pOutputFloat3, 0);
+        }
+        else
+        {
+          __debugbreak();
+        }
+      }
+      else
+      {
+        __debugbreak();
+      }
+    }
+
+    pAnim->numChannels = (int)root.Get("animations[%d].channels", i).ArrayLength();
+    pAnim->pChannels = udAllocType(vcGLTFAnimationChannel, pAnim->numChannels, udAF_Zero);
+
+    for (int channelIndex = 0; channelIndex < pAnim->numChannels; ++channelIndex)
+    {
+      int nodeIndex = root.Get("animations[%d].channels[%d].target.node", i, channelIndex).AsInt();
+      int samplerIndex = root.Get("animations[%d].channels[%d].sampler", i, channelIndex).AsInt();
+      const char *pTargetPath = root.Get("animations[%d].channels[%d].target.path", i, channelIndex).AsString();
+
+      if (nodeIndex < 0 || nodeIndex > pScene->nodeCount)
+        __debugbreak();
+
+      if (samplerIndex < 0 || samplerIndex > pAnim->numSamplers)
+        __debugbreak();
+
+      pAnim->pChannels[channelIndex].pNode = &pScene->pNodes[nodeIndex];
+      pAnim->pChannels[channelIndex].pSampler = &pAnim->pSamplers[samplerIndex];
+
+      pAnim->totalTime = udMax(pAnim->totalTime, pAnim->pChannels[channelIndex].pSampler->pTime[pAnim->pChannels[channelIndex].pSampler->steps - 1]);
+
+      const char *supportedPaths[] = { "translation", "rotation", "scale", "weights" };
+      UDCOMPILEASSERT(udLengthOf(supportedPaths) == vcGLTFChannelTarget_Count, "Array out of date!");
+
+      int j = 0;
+      for (j = 0; j < vcGLTFChannelTarget_Count; ++j)
+      {
+        if (udStrEqual(supportedPaths[j], pTargetPath))
+        {
+          pAnim->pChannels[channelIndex].target = (vcGLTFChannelTarget)j;
+          break;
+        }
+      }
+
+      if (j == vcGLTFChannelTarget_Count)
+        __debugbreak();
+    }
+  }
+
+  return result;
+}
+
+udResult vcGLTF_LoadSkins(vcGLTFScene *pScene, const udJSON &gltfData)
+{
+  pScene->skinCount = (int)gltfData.Get("skins").ArrayLength();
+  pScene->pSkins = udAllocType(vcGLTFSkin, pScene->skinCount, udAF_Zero);
+
+  for (int i = 0; i < pScene->skinCount; ++i)
+  {
+    if (gltfData.Get("skins[%d].name", i).IsString())
+      pScene->pSkins[i].pName = udStrdup(gltfData.Get("skins[%d].name", i).AsString());
+
+    pScene->pSkins[i].baseJoint = gltfData.Get("skins[%d].skeleton", i).AsInt();
+
+    pScene->pSkins[i].jointCount = (int)gltfData.Get("skins[%d].joints", i).ArrayLength();
+    pScene->pSkins[i].pJoints = udAllocType(int, pScene->pSkins[i].jointCount, udAF_Zero);
+
+    if (gltfData.Get("skins[%d].inverseBindMatrices", i).IsIntegral())
+    {
+      pScene->pSkins[i].pInverseBindMatrices = udAllocType(udFloat4x4, pScene->pSkins[i].jointCount, udAF_Zero);
+
+      int offset = 0;
+      int inverseBinds = gltfData.Get("skins[%d].inverseBindMatrices", i).AsInt();
+      vcGLTF_ReadAccessor(pScene, gltfData, inverseBinds, &offset, pScene->pSkins[i].jointCount, (uint8_t*)pScene->pSkins[i].pInverseBindMatrices, 0);
+    }
+
+    for (int j = 0; j < pScene->pSkins[i].jointCount; ++j)
+      pScene->pSkins[i].pJoints[j] = gltfData.Get("skins[%d].joints[%d]", i, j).AsInt();
   }
 
   return udR_Success;
@@ -886,22 +1208,40 @@ udResult vcGLTF_Load(vcGLTFScene **ppScene, const char *pFilename, udWorkerPool 
     __debugbreak();
 
   pScene->nodeCount = (int)gltfData.Get("nodes").ArrayLength();
-  pScene->pNodes = udAllocType(vcGLTFNode, pScene->nodeCount, udAF_Zero);
+  if (pScene->nodeCount > 0)
+    pScene->pNodes = udAllocType(vcGLTFNode, pScene->nodeCount, udAF_Zero);
 
   pScene->bufferCount = (int)gltfData.Get("buffers").ArrayLength();
-  pScene->pBuffers = udAllocType(vcGLTFBuffer, pScene->bufferCount, udAF_Zero);
+  if (pScene->bufferCount > 0)
+    pScene->pBuffers = udAllocType(vcGLTFBuffer, pScene->bufferCount, udAF_Zero);
   
   pScene->meshCount = (int)gltfData.Get("meshes").ArrayLength();
-  pScene->pMeshes = udAllocType(vcGLTFMesh, pScene->meshCount, udAF_Zero);
+  if (pScene->meshCount > 0)
+    pScene->pMeshes = udAllocType(vcGLTFMesh, pScene->meshCount, udAF_Zero);
 
   pScene->textureCount = (int)gltfData.Get("textures").ArrayLength();
-  pScene->ppTextures = udAllocType(vcTexture*, pScene->textureCount, udAF_Zero);
+  if (pScene->textureCount > 0)
+    pScene->ppTextures = udAllocType(vcTexture*, pScene->textureCount, udAF_Zero);
+
+  pScene->animationCount = (int)gltfData.Get("animations").ArrayLength();
+  if (pScene->animationCount > 0)
+    pScene->pAnimations = udAllocType(vcGLTFAnimation, pScene->animationCount, udAF_Zero);
 
   baseScene = gltfData.Get("scene").AsInt();
   pSceneNodes = gltfData.Get("scenes[%d].nodes", baseScene).AsArray();
+
+  // Load Scene, Nodes & Meshes
   for (size_t i = 0; i < pSceneNodes->length; ++i)
+    vcGLTF_ProcessChildNode(pScene, gltfData, pSceneNodes->GetElement(i)->AsInt(), udFloat4x4::identity(), nullptr);
+
+  vcGLTF_LoadAnimations(pScene, gltfData);
+
+  if (gltfData.Get("skins").ArrayLength() > 0)
   {
-    vcGLTF_ProcessChildNode(pScene, gltfData, gltfData.Get("nodes[%d]", pSceneNodes->GetElement(i)->AsInt()), udFloat4x4::identity());
+    if (gltfData.Get("skins").ArrayLength() > 1)
+      __debugbreak();
+    else
+      vcGLTF_LoadSkins(pScene, gltfData);
   }
 
   result = udR_Success;
@@ -940,6 +1280,9 @@ void vcGLTF_Destroy(vcGLTFScene **ppScene)
 
   pScene->meshInstances.Deinit();
 
+  for (int i = 0; i < pScene->nodeCount; ++i)
+    udFree(pScene->pNodes[i].ppChildren);
+
   udFree(pScene->pNodes);
 
   for (int i = 0; i < pScene->textureCount; ++i)
@@ -950,29 +1293,140 @@ void vcGLTF_Destroy(vcGLTFScene **ppScene)
 #endif
   udFree(pScene->ppTextures);
 
+  if (pScene->pSkins != nullptr)
+  {
+    for (int i = 0; i < pScene->skinCount; ++i)
+    {
+      udFree(pScene->pSkins[i].pJoints);
+      udFree(pScene->pSkins[i].pName);
+      udFree(pScene->pSkins[i].pInverseBindMatrices);
+    }
+    udFree(pScene->pSkins);
+  }
+
+  if (pScene->pAnimations != nullptr)
+  {
+    for (int i = 0; i < pScene->animationCount; ++i)
+    {
+      for (int j = 0; j < pScene->pAnimations[i].numSamplers; ++j)
+      {
+        udFree(pScene->pAnimations[i].pSamplers[j].pOutputFloat3);
+        udFree(pScene->pAnimations[i].pSamplers[j].pTime);
+      }
+
+      udFree(pScene->pAnimations[i].pSamplers);
+      udFree(pScene->pAnimations[i].pChannels);
+    }
+
+    udFree(pScene->pAnimations);
+  }
+
   udFree(pScene->pPath);
 
   udFree(pScene);
+}
+
+template<typename T>
+T vcGLTF_CubicSpline(T previousPoint, T previousTangent, T nextPoint, T nextTangent, float interpolationValue)
+{
+  float t = interpolationValue;
+  float t2 = t * t;
+  float t3 = t2 * t;
+
+  return (2.f * t3 - 3.f * t2 + 1.f) * previousPoint + (t3 - 2.f * t2 + t) * previousTangent + (-2.f * t3 + 3.f * t2) * nextPoint + (t3 - t2) * nextTangent;
+}
+
+udResult vcGLTF_Update(vcGLTFScene *pScene, double dt)
+{
+  if (pScene->pAnimations != nullptr)
+  {
+    pScene->currentTime += (float)dt;
+
+    vcGLTFAnimation *pAnim = &pScene->pAnimations[pScene->currentAnimation];
+
+    while (pScene->currentTime > pAnim->totalTime)
+      pScene->currentTime -= pAnim->totalTime;
+
+    for (int i = 0; i < pAnim->numChannels; ++i)
+    {
+      vcGLTFAnimationChannel *pChnl = &pAnim->pChannels[i];
+      pChnl->pNode->dirty = true;
+
+      for (int j = 0; j < pChnl->pSampler->steps - 1; ++j)
+      {
+        if (pChnl->pSampler->pTime[j] < pScene->currentTime && pChnl->pSampler->pTime[j + 1] > pScene->currentTime)
+        {
+          float tdelta = (pChnl->pSampler->pTime[j + 1] - pChnl->pSampler->pTime[j]);
+          float ratio = (pScene->currentTime - pChnl->pSampler->pTime[j]) / tdelta;
+
+          switch (pChnl->target)
+          {
+          case vcGLTFChannelTarget_Translation:
+            if (pChnl->pSampler->interpolationMethod == vcGLTFInterpolation_Linear)
+              pChnl->pNode->translation = udLerp(pChnl->pSampler->pOutputFloat3[j], pChnl->pSampler->pOutputFloat3[j + 1], ratio);
+            else if (pChnl->pSampler->interpolationMethod == vcGLTFInterpolation_Step)
+              pChnl->pNode->translation = pChnl->pSampler->pOutputFloat3[j];
+            else if (pChnl->pSampler->interpolationMethod == vcGLTFInterpolation_CublicSpline)
+              pChnl->pNode->translation = vcGLTF_CubicSpline(pChnl->pSampler->pOutputFloat3[j * 3 + 1], tdelta * pChnl->pSampler->pOutputFloat3[j * 3 + 2], pChnl->pSampler->pOutputFloat3[(j + 1) * 3 + 1], tdelta * pChnl->pSampler->pOutputFloat3[(j + 1) * 3 + 0], ratio);
+            break;
+          case vcGLTFChannelTarget_Rotation:
+            if (pChnl->pSampler->interpolationMethod == vcGLTFInterpolation_Linear)
+              pChnl->pNode->rotation = udSlerp(pChnl->pSampler->pOutputFloatQuat[j], pChnl->pSampler->pOutputFloatQuat[j + 1], (double)ratio);
+            else if (pChnl->pSampler->interpolationMethod == vcGLTFInterpolation_Step)
+              pChnl->pNode->rotation = pChnl->pSampler->pOutputFloatQuat[j];
+            else if (pChnl->pSampler->interpolationMethod == vcGLTFInterpolation_CublicSpline)
+              pChnl->pNode->rotation = vcGLTF_CubicSpline(pChnl->pSampler->pOutputFloatQuat[j * 3 + 1], tdelta * pChnl->pSampler->pOutputFloatQuat[j * 3 + 2], pChnl->pSampler->pOutputFloatQuat[(j + 1) * 3 + 1], tdelta * pChnl->pSampler->pOutputFloatQuat[(j + 1) * 3 + 0], ratio);
+            break;
+          case vcGLTFChannelTarget_Scale:
+            if (pChnl->pSampler->interpolationMethod == vcGLTFInterpolation_Linear)
+              pChnl->pNode->scale = udLerp(pChnl->pSampler->pOutputFloat3[j], pChnl->pSampler->pOutputFloat3[j + 1], ratio);
+            else if (pChnl->pSampler->interpolationMethod == vcGLTFInterpolation_Step)
+              pChnl->pNode->scale = pChnl->pSampler->pOutputFloat3[j];
+            else if (pChnl->pSampler->interpolationMethod == vcGLTFInterpolation_CublicSpline)
+              pChnl->pNode->scale = vcGLTF_CubicSpline(pChnl->pSampler->pOutputFloat3[j * 3 + 1], tdelta * pChnl->pSampler->pOutputFloat3[j * 3 + 2], pChnl->pSampler->pOutputFloat3[(j + 1) * 3 + 1], tdelta * pChnl->pSampler->pOutputFloat3[(j + 1) * 3 + 0], ratio);
+            break;
+          case vcGLTFChannelTarget_Weights:
+            __debugbreak();
+            break;
+          }
+
+          break;
+        }
+      }
+    }
+
+    for (int i = 0; i < pScene->nodeCount; ++i)
+    {
+      pScene->pNodes[i].GetMat(false);
+    }
+  }
+
+  return udR_Success;
 }
 
 udResult vcGLTF_Render(vcGLTFScene *pScene, udRay<double> camera, udDouble4x4 worldMatrix, udDouble4x4 viewMatrix, udDouble4x4 projectionMatrix, vcGLTFRenderPass pass)
 {
   int bound = -1;
 
-  udFloat4x4 SpaceChange = { 1, 0, 0, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1 };
-
-  for (int i = 0; i < 72; ++i)
-  {
-    s_gltfVertSkinningInfo.u_jointMatrix[i] = udFloat4x4::identity();
-    s_gltfVertSkinningInfo.u_jointNormalMatrix[i] = udFloat4x4::identity();
-  }
+  const udFloat4x4 SpaceChange = { 1, 0, 0, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1 };
 
   for (size_t i = 0; i < pScene->meshInstances.length; ++i)
   {
-    s_gltfVertInfo.u_ModelMatrix = udFloat4x4::create(worldMatrix) * SpaceChange * pScene->meshInstances[i].matrix;
+    if (pScene->meshInstances[i].skinID >= 0)
+    {
+      vcGLTFSkin *pSkin = &pScene->pSkins[pScene->meshInstances[i].skinID];
+
+      for (int j = 0; j < pSkin->jointCount; ++j)
+      {
+        s_gltfVertSkinningInfo.u_jointMatrix[j] = pScene->pNodes[pSkin->pJoints[j]].GetMat(false) * pSkin->pInverseBindMatrices[j];
+        s_gltfVertSkinningInfo.u_jointNormalMatrix[j] = udTranspose(udInverse(s_gltfVertSkinningInfo.u_jointMatrix[j]));
+      }
+    }
+
+    s_gltfVertInfo.u_ModelMatrix = udFloat4x4::create(worldMatrix) * SpaceChange * pScene->meshInstances[i].pNode->GetMat(false);
     s_gltfVertInfo.u_ViewProjectionMatrix = udFloat4x4::create(projectionMatrix * viewMatrix);
     s_gltfVertInfo.u_NormalMatrix = udTranspose(udInverse(s_gltfVertInfo.u_ModelMatrix));
-
+    
     s_gltfFragInfo.u_Camera = udFloat3::create(camera.position);
 
     for (int j = 0; j < pScene->pMeshes[pScene->meshInstances[i].meshID].numPrimitives; ++j)
@@ -990,6 +1444,9 @@ udResult vcGLTF_Render(vcGLTFScene *pScene, udRay<double> camera, udDouble4x4 wo
       }
 
       vcShader_BindConstantBuffer(shader.pShader, shader.pVertUniformBuffer, &s_gltfVertInfo, sizeof(s_gltfVertInfo));
+
+      if ((prim.features & vcRSB_Skinned) > 0)
+        vcShader_BindConstantBuffer(shader.pShader, shader.pSkinningUniformBuffer, &s_gltfVertSkinningInfo, sizeof(s_gltfVertSkinningInfo));
 
       //Material
       s_gltfFragInfo.u_EmissiveFactor = prim.emissiveFactor;
