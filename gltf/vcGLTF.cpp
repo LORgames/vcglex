@@ -104,7 +104,7 @@ struct vcGLTFMeshInstance
 {
   vcGLTFNode *pNode;
   int meshID;
-  int skinID; // -1
+  int skinID; // -1 for no skin
 };
 
 enum vcGLTF_AlphaMode
@@ -185,6 +185,7 @@ struct vcGLTFAnimationSampler
 
   float *pTime;
   vcGLTFInterpolation interpolationMethod;
+
   union
   {
     udFloat3 *pOutputFloat3;
@@ -194,7 +195,7 @@ struct vcGLTFAnimationSampler
 
 struct vcGLTFAnimationChannel
 {
-  vcGLTFNode *pNode;
+  int nodeIndex;
   vcGLTFAnimationSampler *pSampler;
 
   vcGLTFChannelTarget target;
@@ -248,7 +249,7 @@ struct vcGLTFScene
 
   // Move these to a "scene instance" at some point...
   float currentTime;
-  int currentAnimation;
+  vcGLTFAnimation *pCurrentAnimation;
 };
 
 struct vcGLTFShader
@@ -511,6 +512,7 @@ udResult vcGLTF_ReadAccessor(vcGLTFScene *pScene, const udJSON &root, int attrib
     __debugbreak();
 
   const char* pAccessorType = accessor.Get("type").AsString();
+  vcGLTFTypes accessorComponentType = (vcGLTFTypes)accessor.Get("componentType").AsInt();
   ptrdiff_t byteOffset = accessor.Get("byteOffset").AsInt64() + root.Get("bufferViews[%d].byteOffset", accessor.Get("bufferView").AsInt(-1)).AsInt64();
   ptrdiff_t byteStride = accessor.Get("byteStride").AsInt64() + root.Get("bufferViews[%d].byteStride", accessor.Get("bufferView").AsInt(-1)).AsInt64();
 
@@ -560,13 +562,20 @@ udResult vcGLTF_ReadAccessor(vcGLTFScene *pScene, const udJSON &root, int attrib
     __debugbreak();
   }
 
-  if (bufferID >= pScene->bufferCount || pScene->pBuffers[bufferID].pBytes == nullptr)
-  {
-    __debugbreak(); // Buffer out of bounds
-  }
+  if (bufferID < 0 || bufferID >= pScene->bufferCount)
+    __debugbreak();
+  else if (pScene->pBuffers[bufferID].pBytes == nullptr)
+    vcGLTF_LoadBuffer(pScene, root, bufferID);
 
   if (byteStride == 0)
-    byteStride = count * sizeof(float);
+  {
+    if (accessorComponentType == vcGLTFType_F32)
+      byteStride = count * sizeof(float);
+    else if (accessorComponentType == vcGLTFType_Int16 || accessorComponentType == vcGLTFType_UInt16)
+      byteStride = count * sizeof(uint16_t);
+    else
+      __debugbreak();
+  }
 
   if (stride == 0)
     stride = (int)byteStride;
@@ -702,7 +711,7 @@ udResult vcGLTF_CreateMesh(vcGLTFScene *pScene, const udJSON &root, int meshID)
         if (bufferID <= -1)
           __debugbreak();
 
-        int indexType = accessor.Get("componentType").AsInt();
+        vcGLTFTypes indexType = (vcGLTFTypes)accessor.Get("componentType").AsInt();
         ptrdiff_t offset = accessor.Get("byteOffset").AsInt64() + root.Get("bufferViews[%d].byteOffset", accessor.Get("bufferView").AsInt(-1)).AsInt();
 
         if (indexType == vcGLTFType_Int16 || indexType == vcGLTFType_UInt16 || indexType == vcGLTFType_Int8 || indexType == vcGLTFType_UInt8)
@@ -1118,7 +1127,7 @@ udResult vcGLTF_LoadAnimations(vcGLTFScene *pScene, const udJSON &root)
       if (samplerIndex < 0 || samplerIndex > pAnim->numSamplers)
         __debugbreak();
 
-      pAnim->pChannels[channelIndex].pNode = &pScene->pNodes[nodeIndex];
+      pAnim->pChannels[channelIndex].nodeIndex = nodeIndex;
       pAnim->pChannels[channelIndex].pSampler = &pAnim->pSamplers[samplerIndex];
 
       pAnim->totalTime = udMax(pAnim->totalTime, pAnim->pChannels[channelIndex].pSampler->pTime[pAnim->pChannels[channelIndex].pSampler->steps - 1]);
@@ -1338,11 +1347,14 @@ T vcGLTF_CubicSpline(T previousPoint, T previousTangent, T nextPoint, T nextTang
 
 udResult vcGLTF_Update(vcGLTFScene *pScene, double dt)
 {
-  if (pScene->pAnimations != nullptr)
+  if (pScene->pCurrentAnimation == nullptr && pScene->pAnimations != nullptr)
+    pScene->pCurrentAnimation = &pScene->pAnimations[0];
+
+  if (pScene->pCurrentAnimation != nullptr)
   {
     pScene->currentTime += (float)dt;
 
-    vcGLTFAnimation *pAnim = &pScene->pAnimations[pScene->currentAnimation];
+    vcGLTFAnimation *pAnim = pScene->pCurrentAnimation;
 
     while (pScene->currentTime > pAnim->totalTime)
       pScene->currentTime -= pAnim->totalTime;
@@ -1350,7 +1362,9 @@ udResult vcGLTF_Update(vcGLTFScene *pScene, double dt)
     for (int i = 0; i < pAnim->numChannels; ++i)
     {
       vcGLTFAnimationChannel *pChnl = &pAnim->pChannels[i];
-      pChnl->pNode->dirty = true;
+      vcGLTFNode *pNode = &pScene->pNodes[pChnl->nodeIndex];
+
+      pNode->dirty = true;
 
       for (int j = 0; j < pChnl->pSampler->steps - 1; ++j)
       {
@@ -1363,27 +1377,27 @@ udResult vcGLTF_Update(vcGLTFScene *pScene, double dt)
           {
           case vcGLTFChannelTarget_Translation:
             if (pChnl->pSampler->interpolationMethod == vcGLTFInterpolation_Linear)
-              pChnl->pNode->translation = udLerp(pChnl->pSampler->pOutputFloat3[j], pChnl->pSampler->pOutputFloat3[j + 1], ratio);
+              pNode->translation = udLerp(pChnl->pSampler->pOutputFloat3[j], pChnl->pSampler->pOutputFloat3[j + 1], ratio);
             else if (pChnl->pSampler->interpolationMethod == vcGLTFInterpolation_Step)
-              pChnl->pNode->translation = pChnl->pSampler->pOutputFloat3[j];
+              pNode->translation = pChnl->pSampler->pOutputFloat3[j];
             else if (pChnl->pSampler->interpolationMethod == vcGLTFInterpolation_CublicSpline)
-              pChnl->pNode->translation = vcGLTF_CubicSpline(pChnl->pSampler->pOutputFloat3[j * 3 + 1], tdelta * pChnl->pSampler->pOutputFloat3[j * 3 + 2], pChnl->pSampler->pOutputFloat3[(j + 1) * 3 + 1], tdelta * pChnl->pSampler->pOutputFloat3[(j + 1) * 3 + 0], ratio);
+              pNode->translation = vcGLTF_CubicSpline(pChnl->pSampler->pOutputFloat3[j * 3 + 1], tdelta * pChnl->pSampler->pOutputFloat3[j * 3 + 2], pChnl->pSampler->pOutputFloat3[(j + 1) * 3 + 1], tdelta * pChnl->pSampler->pOutputFloat3[(j + 1) * 3 + 0], ratio);
             break;
           case vcGLTFChannelTarget_Rotation:
             if (pChnl->pSampler->interpolationMethod == vcGLTFInterpolation_Linear)
-              pChnl->pNode->rotation = udSlerp(pChnl->pSampler->pOutputFloatQuat[j], pChnl->pSampler->pOutputFloatQuat[j + 1], (double)ratio);
+              pNode->rotation = udSlerp(pChnl->pSampler->pOutputFloatQuat[j], pChnl->pSampler->pOutputFloatQuat[j + 1], (double)ratio);
             else if (pChnl->pSampler->interpolationMethod == vcGLTFInterpolation_Step)
-              pChnl->pNode->rotation = pChnl->pSampler->pOutputFloatQuat[j];
+              pNode->rotation = pChnl->pSampler->pOutputFloatQuat[j];
             else if (pChnl->pSampler->interpolationMethod == vcGLTFInterpolation_CublicSpline)
-              pChnl->pNode->rotation = vcGLTF_CubicSpline(pChnl->pSampler->pOutputFloatQuat[j * 3 + 1], tdelta * pChnl->pSampler->pOutputFloatQuat[j * 3 + 2], pChnl->pSampler->pOutputFloatQuat[(j + 1) * 3 + 1], tdelta * pChnl->pSampler->pOutputFloatQuat[(j + 1) * 3 + 0], ratio);
+              pNode->rotation = vcGLTF_CubicSpline(pChnl->pSampler->pOutputFloatQuat[j * 3 + 1], tdelta * pChnl->pSampler->pOutputFloatQuat[j * 3 + 2], pChnl->pSampler->pOutputFloatQuat[(j + 1) * 3 + 1], tdelta * pChnl->pSampler->pOutputFloatQuat[(j + 1) * 3 + 0], ratio);
             break;
           case vcGLTFChannelTarget_Scale:
             if (pChnl->pSampler->interpolationMethod == vcGLTFInterpolation_Linear)
-              pChnl->pNode->scale = udLerp(pChnl->pSampler->pOutputFloat3[j], pChnl->pSampler->pOutputFloat3[j + 1], ratio);
+              pNode->scale = udLerp(pChnl->pSampler->pOutputFloat3[j], pChnl->pSampler->pOutputFloat3[j + 1], ratio);
             else if (pChnl->pSampler->interpolationMethod == vcGLTFInterpolation_Step)
-              pChnl->pNode->scale = pChnl->pSampler->pOutputFloat3[j];
+              pNode->scale = pChnl->pSampler->pOutputFloat3[j];
             else if (pChnl->pSampler->interpolationMethod == vcGLTFInterpolation_CublicSpline)
-              pChnl->pNode->scale = vcGLTF_CubicSpline(pChnl->pSampler->pOutputFloat3[j * 3 + 1], tdelta * pChnl->pSampler->pOutputFloat3[j * 3 + 2], pChnl->pSampler->pOutputFloat3[(j + 1) * 3 + 1], tdelta * pChnl->pSampler->pOutputFloat3[(j + 1) * 3 + 0], ratio);
+              pNode->scale = vcGLTF_CubicSpline(pChnl->pSampler->pOutputFloat3[j * 3 + 1], tdelta * pChnl->pSampler->pOutputFloat3[j * 3 + 2], pChnl->pSampler->pOutputFloat3[(j + 1) * 3 + 1], tdelta * pChnl->pSampler->pOutputFloat3[(j + 1) * 3 + 0], ratio);
             break;
           case vcGLTFChannelTarget_Weights:
             __debugbreak();
@@ -1528,4 +1542,29 @@ udResult vcGLTF_Render(vcGLTFScene *pScene, udRay<double> camera, udDouble4x4 wo
   }
 
   return udR_Success;
+}
+
+void vcGLTF_OverrideDiffuse(vcGLTFScene *pScene, vcTexture *pTexture)
+{
+  for (int i = 0; i < pScene->meshCount; ++i)
+    for (int j = 0; j < pScene->pMeshes[i].numPrimitives; ++j)
+      pScene->ppTextures[pScene->pMeshes[i].pPrimitives[j].baseColorTexture] = pTexture;
+}
+
+int vcGLTFAnim_GetNumberOfAnimations(vcGLTFScene *pScene)
+{
+  return pScene->animationCount;
+}
+
+vcGLTFAnimation* vcGLTFAnim_GetAnimation(vcGLTFScene *pScene, int index)
+{
+  if (pScene == nullptr || index < 0 || pScene->animationCount < index)
+    return nullptr;
+
+  return &pScene->pAnimations[index];
+}
+
+void vcGLTFAnim_SetAnimation(vcGLTFScene *pScene, vcGLTFAnimation *pAnim)
+{
+  pScene->pCurrentAnimation = pAnim;
 }

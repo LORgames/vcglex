@@ -5,6 +5,8 @@
 #include "udMath.h"
 
 struct vcGLTFScene;
+struct vcGLTFAnimation;
+struct vcTexture;
 
 // Read the OBJ, optionally only reading a specific count of vertices (to test for valid format for example)
 udResult vcGLTF_Load(vcGLTFScene **ppScene, const char *pFilename, udWorkerPool *pWorkerPool);
@@ -22,7 +24,14 @@ enum vcGLTFRenderPass
 };
 
 udResult vcGLTF_Update(vcGLTFScene *pScene, double dt);
-
 udResult vcGLTF_Render(vcGLTFScene *ppScene, udRay<double> camera, udDouble4x4 worldMatrix, udDouble4x4 viewMatrix, udDouble4x4 projectionMatrix, vcGLTFRenderPass pass);
+
+// Some skinning stuff...
+void vcGLTF_OverrideDiffuse(vcGLTFScene *pScene, vcTexture *pTexture);
+
+// Some animation extraction helpers
+int vcGLTFAnim_GetNumberOfAnimations(vcGLTFScene *pScene);
+vcGLTFAnimation* vcGLTFAnim_GetAnimation(vcGLTFScene *pScene, int index);
+void vcGLTFAnim_SetAnimation(vcGLTFScene *pScene, vcGLTFAnimation *pAnim);
 
 #endif //vcGLTF_h__
