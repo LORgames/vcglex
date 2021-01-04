@@ -313,7 +313,12 @@ struct vcGLTFVertFragSettings
   int u_alphaMode; // 0 = OPAQUE, 1 = ALPHAMASK, 2 = BLEND
   float u_AlphaCutoff;
 
-  udFloat2 __padding;
+  float __padding;
+  int u_lightCount;
+
+  udFloat4 u_ambience;
+
+  vcGLTFLight u_Lights[8];
 } s_gltfFragInfo = {};
 
 
@@ -1418,11 +1423,17 @@ udResult vcGLTF_Update(vcGLTFScene *pScene, double dt)
   return udR_Success;
 }
 
-udResult vcGLTF_Render(vcGLTFScene *pScene, udRay<double> camera, udDouble4x4 worldMatrix, udDouble4x4 viewMatrix, udDouble4x4 projectionMatrix, vcGLTFRenderPass pass)
+udResult vcGLTF_Render(vcGLTFScene *pScene, udRay<double> camera, udDouble4x4 worldMatrix, udDouble4x4 viewMatrix, udDouble4x4 projectionMatrix, vcGLTFRenderPass pass, const vcGLTFLightSet &lighting)
 {
   int bound = -1;
 
   const udFloat4x4 SpaceChange = { 1, 0, 0, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1 };
+
+  s_gltfFragInfo.u_Camera = udFloat3::create(camera.position);
+
+  s_gltfFragInfo.u_ambience = udFloat4::create(lighting.ambientLighting, 0.f);
+  s_gltfFragInfo.u_lightCount = lighting.lightCount;
+  memcpy(s_gltfFragInfo.u_Lights, lighting.lights, sizeof(vcGLTFLight) * lighting.lightCount);
 
   for (size_t i = 0; i < pScene->meshInstances.length; ++i)
   {
@@ -1441,8 +1452,6 @@ udResult vcGLTF_Render(vcGLTFScene *pScene, udRay<double> camera, udDouble4x4 wo
     s_gltfVertInfo.u_ViewProjectionMatrix = udFloat4x4::create(projectionMatrix * viewMatrix);
     s_gltfVertInfo.u_NormalMatrix = udTranspose(udInverse(s_gltfVertInfo.u_ModelMatrix));
     
-    s_gltfFragInfo.u_Camera = udFloat3::create(camera.position);
-
     for (int j = 0; j < pScene->pMeshes[pScene->meshInstances[i].meshID].numPrimitives; ++j)
     {
       const vcGLTFMeshPrimitive &prim = pScene->pMeshes[pScene->meshInstances[i].meshID].pPrimitives[j];

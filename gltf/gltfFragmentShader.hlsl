@@ -19,10 +19,31 @@ struct PS_INPUT
 
 struct PS_OUTPUT
 {
-  float4 baseRGB_Metal : SV_Target0;
-  float4 emitRGB_Rough : SV_Target1;
-  float4 normXYZ_X : SV_Target2;
+  float4 colour : SV_Target;
 };
+
+// KHR_lights_punctual extension.
+// see https://github.com/KhronosGroup/glTF/tree/master/extensions/2.0/Khronos/KHR_lights_punctual
+struct Light
+{
+  float3 direction;
+  float range;
+
+  float3 color;
+  float intensity;
+
+  float3 position;
+  float innerConeCos;
+
+  float outerConeCos;
+  int type;
+
+  float2 __padding;
+};
+
+static const int LightType_Directional = 0;
+static const int LightType_Point = 1;
+static const int LightType_Spot = 2;
 
 struct NormalInfo
 {
@@ -37,7 +58,6 @@ cbuffer u_FragSettings : register(b0)
   float3 u_Camera;
   float u_Exposure;
   float3 u_EmissiveFactor;
-
   float u_NormalScale;
 
   // Metallic Roughness
@@ -57,7 +77,12 @@ cbuffer u_FragSettings : register(b0)
   int u_alphaMode; // 0 = OPAQUE, 1 = ALPHAMASK, 2 = BLEND
   float u_AlphaCutoff;
 
-  float2 __padding;
+  float __padding;
+  int u_lightCount;
+
+  float4 u_ambience;
+
+  Light u_Lights[8];
 }
 
 sampler normalSampler;
@@ -123,6 +148,86 @@ float3 toneMap(float3 color)
   color *= u_Exposure;
 
   return linearTosRGB(color);
+}
+
+// The following equation models the Fresnel reflectance term of the spec equation (aka F())
+// Implementation of fresnel from [4], Equation 15
+float3 F_Schlick(float3 f0, float3 f90, float VdotH)
+{
+  return f0 + (f90 - f0) * pow(clamp(1.0 - VdotH, 0.0, 1.0), 5.0);
+}
+
+// Smith Joint GGX
+// Note: Vis = G / (4 * NdotL * NdotV)
+// see Eric Heitz. 2014. Understanding the Masking-Shadowing Function in Microfacet-Based BRDFs. Journal of Computer Graphics Techniques, 3
+// see Real-Time Rendering. Page 331 to 336.
+// see https://google.github.io/filament/Filament.md.html#materialsystem/specularbrdf/geometricshadowing(specularg)
+float V_GGX(float NdotL, float NdotV, float alphaRoughness)
+{
+  float alphaRoughnessSq = alphaRoughness * alphaRoughness;
+
+  float GGXV = NdotL * sqrt(NdotV * NdotV * (1.0 - alphaRoughnessSq) + alphaRoughnessSq);
+  float GGXL = NdotV * sqrt(NdotL * NdotL * (1.0 - alphaRoughnessSq) + alphaRoughnessSq);
+
+  float GGX = GGXV + GGXL;
+  if (GGX > 0.0)
+  {
+    return 0.5 / GGX;
+  }
+  return 0.0;
+}
+
+// The following equation(s) model the distribution of microfacet normals across the area being drawn (aka D())
+// Implementation from "Average Irregularity Representation of a Roughened Surface for Ray Reflection" by T. S. Trowbridge, and K. P. Reitz
+// Follows the distribution function recommended in the SIGGRAPH 2013 course notes from EPIC Games [1], Equation 3.
+float D_GGX(float NdotH, float alphaRoughness)
+{
+  float alphaRoughnessSq = alphaRoughness * alphaRoughness;
+  float f = (NdotH * NdotH) * (alphaRoughnessSq - 1.0) + 1.0;
+  return alphaRoughnessSq / (M_PI * f * f);
+}
+
+//https://github.com/KhronosGroup/glTF/tree/master/specification/2.0#acknowledgments AppendixB
+float3 BRDF_lambertian(float3 f0, float3 f90, float3 diffuseColor, float VdotH)
+{
+  // see https://seblagarde.wordpress.com/2012/01/08/pi-or-not-to-pi-in-game-lighting-equation/
+  return (1.0 - F_Schlick(f0, f90, VdotH)) * (diffuseColor / M_PI);
+}
+
+//  https://github.com/KhronosGroup/glTF/tree/master/specification/2.0#acknowledgments AppendixB
+float3 BRDF_specularGGX(float3 f0, float3 f90, float alphaRoughness, float VdotH, float NdotL, float NdotV, float NdotH)
+{
+  float3 F = F_Schlick(f0, f90, VdotH);
+  float Vis = V_GGX(NdotL, NdotV, alphaRoughness);
+  float D = D_GGX(NdotH, alphaRoughness);
+
+  return F * Vis * D;
+}
+
+// https://github.com/KhronosGroup/glTF/blob/master/extensions/2.0/Khronos/KHR_lights_punctual/README.md#range-property
+float getRangeAttenuation(float range, float distance)
+{
+  if (range <= 0.0)
+  {
+    // negative range means unlimited
+    return 1.0;
+  }
+  return max(min(1.0 - pow(distance / range, 4.0), 1.0), 0.0) / pow(distance, 2.0);
+}
+
+// https://github.com/KhronosGroup/glTF/blob/master/extensions/2.0/Khronos/KHR_lights_punctual/README.md#inner-and-outer-cone-angles
+float getSpotAttenuation(float3 pointToLight, float3 spotDirection, float outerConeCos, float innerConeCos)
+{
+  float actualCos = dot(normalize(spotDirection), normalize(-pointToLight));
+  if (actualCos > outerConeCos)
+  {
+    if (actualCos < innerConeCos)
+    {
+      return smoothstep(outerConeCos, innerConeCos, actualCos);
+    }
+    return 1.0;
+  }
+  return 0.0;
 }
 
 float2 getNormalUV(PS_INPUT input)
@@ -331,19 +436,60 @@ PS_OUTPUT main(PS_INPUT input)
 
   // LIGHTING
   float3 f_emissive = float3(0.0, 0.0, 0.0);
+  float3 f_diffuse = float3(0, 0, 0) + sRGBToLinear(materialInfo.albedoColor * u_ambience.xyz);
+  float3 f_specular = float3(0, 0, 0);
+
+  for (int i = 0; i < u_lightCount; ++i)
+  {
+    Light light = u_Lights[i];
+
+    float3 pointToLight = -light.direction;
+    float rangeAttenuation = 1.0;
+    float spotAttenuation = 1.0;
+
+    if (light.type != LightType_Directional)
+    {
+      pointToLight = light.position - input.v_Position;
+      rangeAttenuation = getRangeAttenuation(light.range, length(pointToLight));
+    }
+
+    if (light.type == LightType_Spot)
+    {
+      spotAttenuation = getSpotAttenuation(pointToLight, light.direction, light.outerConeCos, light.innerConeCos);
+    }
+
+    float3 intensity = rangeAttenuation * spotAttenuation * light.intensity * light.color;
+
+    float3 l = normalize(pointToLight);   // Direction from surface point to light
+    float3 h = normalize(l + v);          // Direction of the vector between l and v, called halfway vector
+    float NdotL = clampedDot(n, l);
+    float NdotV = clampedDot(n, v);
+    float NdotH = clampedDot(n, h);
+    float LdotH = clampedDot(l, h);
+    float VdotH = clampedDot(v, h);
+
+    if (NdotL > 0.0 || NdotV > 0.0)
+    {
+      // Calculation of analytical light
+      //https://github.com/KhronosGroup/glTF/tree/master/specification/2.0#acknowledgments AppendixB
+      f_diffuse += intensity * NdotL * BRDF_lambertian(materialInfo.f0, materialInfo.f90, materialInfo.albedoColor, VdotH);
+      f_specular += intensity * NdotL * BRDF_specularGGX(materialInfo.f0, materialInfo.f90, materialInfo.alphaRoughness, VdotH, NdotL, NdotV, NdotH);
+    }
+  }
 
   f_emissive = u_EmissiveFactor;
 
   if (u_EmissiveUVSet >= 0)
     f_emissive *= sRGBToLinear(u_EmissiveSampler.Sample(emissiveSampler, getEmissiveUV(input))).rgb;
 
+  float3 color = (f_emissive.rgb + f_diffuse + f_specular);
   float ao = 1.0;
 
   // Apply optional PBR terms for additional (optional) shading
   if (u_OcclusionUVSet >= 0)
   {
     ao = u_OcclusionSampler.Sample(occlusionSampler, getOcclusionUV(input)).r;
-    baseColor = lerp(baseColor, baseColor * ao, u_OcclusionStrength);
+    color = lerp(color, color * ao, u_OcclusionStrength);
   }
 
   if (u_alphaMode == 1) //MASK
@@ -355,9 +501,7 @@ PS_OUTPUT main(PS_INPUT input)
     baseColor.a = 1.0;
   }
 
-  output.emitRGB_Rough = float4(f_emissive, materialInfo.perceptualRoughness);
-  output.baseRGB_Metal = float4(baseColor.xyz, materialInfo.metallic);
-  output.normXYZ_X = float4(n * 0.5 + 0.5, 0.0);
+  output.colour = float4(toneMap(color), baseColor.a);
 
   return output;
 }

@@ -23,8 +23,39 @@ enum vcGLTFRenderPass
   vcGLTFRP_Shadows,
 };
 
+enum vcGLTFLightType
+{
+  vcGLTFLightType_Directional = 0,
+  vcGLTFLightType_Point = 1,
+  vcGLTFLightType_Spot = 2,
+};
+
+struct vcGLTFLight
+{
+  udFloat3 direction;
+  float range;
+
+  udFloat3 color;
+  float intensity;
+
+  udFloat3 position;
+  float innerConeCos;
+
+  float outerConeCos;
+  int type; //vcGLTFLightType
+
+  udFloat2 __padding;
+};
+
+struct vcGLTFLightSet
+{
+  udFloat3 ambientLighting;
+  int lightCount; // Upto 8
+  vcGLTFLight lights[8];
+};
+
 udResult vcGLTF_Update(vcGLTFScene *pScene, double dt);
-udResult vcGLTF_Render(vcGLTFScene *ppScene, udRay<double> camera, udDouble4x4 worldMatrix, udDouble4x4 viewMatrix, udDouble4x4 projectionMatrix, vcGLTFRenderPass pass);
+udResult vcGLTF_Render(vcGLTFScene *ppScene, udRay<double> camera, udDouble4x4 worldMatrix, udDouble4x4 viewMatrix, udDouble4x4 projectionMatrix, vcGLTFRenderPass pass, const vcGLTFLightSet &lighting);
 
 // Some skinning stuff...
 void vcGLTF_OverrideDiffuse(vcGLTFScene *pScene, vcTexture *pTexture);
