@@ -20,8 +20,8 @@ cbuffer u_EveryFrame : register(b0)
 #ifdef HAS_SKINNING
 cbuffer u_SkinningInfo : register(b1)
 {
-  float4x4 u_jointMatrix[72];
-  float4x4 u_jointNormalMatrix[72];
+  float4x4 u_jointMatrix[96];
+  float4x4 u_jointNormalMatrix[96];
 }
 #endif
 
